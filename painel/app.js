@@ -303,10 +303,12 @@ function pixAtual(){ var sub=cartSubtotal(), total=sub-descontoValor(sub)+chkTax
 function qrDataUrl(txt){ try{ if(typeof qrcode==='undefined') return null; var qr=qrcode(0,'M'); qr.addData(txt); qr.make(); return qr.createDataURL(5,10); }catch(e){ return null; } }
 
 /* ============================ RENDER / DISPATCH ============================ */
+function ehNoite(){ return agoraMinLoja() >= 1080; }   // 18:00 em diante = jantar (preço de noite)
+function varPreco(v){ return (v && v.precoNoite!=null && ehNoite()) ? v.precoNoite : (v ? v.preco : 0); }
 function normalizarCardapio(s){
   if(!s||!s.produtos) return;
   s.produtos.forEach(function(p){ (p.variacoes||[]).forEach(function(v){
-    if(v.nome==='Completo'){ v.feijao=true; if(v.inclui) v.inclui=v.inclui.filter(function(x){ return !/feij/i.test(x); }); }
+    if(v.nome==='Completo'){ v.feijao=true; if(v.inclui) v.inclui=v.inclui.filter(function(x){ return !/feij/i.test(x); }); if(p.nome!=='Picanha' && v.precoNoite==null) v.precoNoite=25; }
   }); });
 }
 function render(){
@@ -440,7 +442,7 @@ function menuInner(){
 function prodCard(p){
   var off=p.disp==='esgotado';
   var temVar=p.variacoes&&p.variacoes.length;
-  var base=temVar?Math.min.apply(null,p.variacoes.map(function(v){return v.preco;})):p.preco;
+  var base=temVar?Math.min.apply(null,p.variacoes.map(function(v){return varPreco(v);})):p.preco;
   var priceLabel=temVar?'<span class="pfrom">a partir de </span>'+money(base):money(p.preco);
   return '<div class="prod'+(off?' off':'')+'" '+(off?'':'data-action="cli-prod" data-id="'+p.id+'"')+'>'+
     '<div class="pbody"><div class="pname">'+esc(p.nome)+'</div>'+
@@ -463,7 +465,7 @@ function abrirProduto(id, editIdx){
   } else { pdSel={qty:1, varIdx: vars?0:-1, g:{}, obs:'', edit:null, feijao:null}; }
   UI._pdId=id; modal(pdHTML(p));
 }
-function pdBase(p){ var vars=pdVars(p); return vars ? vars[pdSel.varIdx].preco : p.preco; }
+function pdBase(p){ var vars=pdVars(p); return vars ? varPreco(vars[pdSel.varIdx]) : p.preco; }
 function pdAdicTotal(p){ var t=0; (p.grupos||[]).forEach(function(gr,gi){ var sel=pdSel.g[gi]||{}; gr.itens.forEach(function(it,ii){ t+=(sel[ii]||0)*it.preco; }); }); return t; }
 function pdTotal(p){ return (pdBase(p)+pdAdicTotal(p))*pdSel.qty; }
 function grpSum(gi){ var sel=pdSel.g[gi]||{}, s=0; Object.keys(sel).forEach(function(k){ s+=sel[k]; }); return s; }
@@ -475,7 +477,7 @@ function pdHTML(p){
   if(vars){
     h+='<div class="grp"><div class="grp-head"><strong>Escolha uma opção</strong><span class="grp-max">obrigatório</span></div>'+
       vars.map(function(v,i){ var sel=pdSel.varIdx===i;
-        return '<div class="opt'+(sel?' sel':'')+'" data-action="pd-var" data-v="'+i+'"><span class="ck">'+(sel?ic('check'):'')+'</span><span class="oname">'+esc(v.nome)+'</span><span class="oprice">'+money(v.preco)+'</span></div>';
+        return '<div class="opt'+(sel?' sel':'')+'" data-action="pd-var" data-v="'+i+'"><span class="ck">'+(sel?ic('check'):'')+'</span><span class="oname">'+esc(v.nome)+'</span><span class="oprice">'+money(varPreco(v))+'</span></div>';
       }).join('')+'</div>';
     if(varSel && varSel.inclui && varSel.inclui.length){
       var acomp=varSel.inclui.slice(); if(varSel.feijao) acomp=acomp.concat([pdSel.feijao||FEIJOES[0]]);
@@ -1206,7 +1208,7 @@ function patchPd(){ var p=prod(UI._pdId); if(!p) return; var m=document.querySel
 on('pd-add',function(d){
   var p=prod(d.id); if(!p) return;
   var vars=pdVars(p), varNome='', inclui=[], base=p.preco;
-  if(vars){ if(pdSel.varIdx<0){ toast('Escolha uma opção','err'); return; } var v=vars[pdSel.varIdx]; varNome=v.nome; inclui=v.inclui||[]; base=v.preco; }
+  if(vars){ if(pdSel.varIdx<0){ toast('Escolha uma opção','err'); return; } var v=vars[pdSel.varIdx]; varNome=v.nome; inclui=v.inclui||[]; base=varPreco(v); }
   var adics=[];
   (p.grupos||[]).forEach(function(gr,gi){ var sel=pdSel.g[gi]||{}; gr.itens.forEach(function(it,ii){ var q=sel[ii]||0; if(q>0) adics.push({nome:it.nome,preco:it.preco,qty:q}); }); });
   var unit=base+adics.reduce(function(a,x){return a+x.preco*x.qty;},0);
