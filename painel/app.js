@@ -307,9 +307,16 @@ function ehNoite(){ return agoraMinLoja() >= 1080; }   // 18:00 em diante = jant
 function varPreco(v){ return (v && v.precoNoite!=null && ehNoite()) ? v.precoNoite : (v ? v.preco : 0); }
 function normalizarCardapio(s){
   if(!s||!s.produtos) return;
-  s.produtos.forEach(function(p){ (p.variacoes||[]).forEach(function(v){
-    if(v.nome==='Completo'){ v.feijao=true; if(v.inclui) v.inclui=v.inclui.filter(function(x){ return !/feij/i.test(x); }); if(p.nome!=='Picanha' && v.precoNoite==null) v.precoNoite=25; }
-  }); });
+  s.produtos.forEach(function(p){
+    var nome=String(p.nome||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+    var semPrecoNoite = (nome==='picanha' || nome==='file de peixe'); // preço igual no almoço e na janta
+    (p.variacoes||[]).forEach(function(v){
+      if(v.nome==='Completo'){
+        v.feijao=true; if(v.inclui) v.inclui=v.inclui.filter(function(x){ return !/feij/i.test(x); });
+        if(semPrecoNoite){ delete v.precoNoite; } else { v.precoNoite=25; }
+      }
+    });
+  });
 }
 function render(){
   normalizarCardapio(S);
