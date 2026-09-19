@@ -1046,12 +1046,18 @@ function cupomHTML(o,reimp){
 }
 function abrirCupom(o,reimp){
   var pa=$('print-area'); if(pa) pa.innerHTML=cupomHTML(o,reimp);
-  modal('<h2 class="center">Cupom · Delivery</h2>'+cupomHTML(o,reimp)+
-    '<div class="sticky-cta"><button class="btn btn-primary btn-block" data-action="do-print">'+ic('printer')+' Imprimir cupom</button>'+
-    '<button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="close-modal">Fechar</button></div>',true);
-  setTimeout(function(){ try{ window.print(); }catch(e){} }, 400); // abre a impressão no dispositivo do computador
+  UI._cupom={o:o,reimp:reimp};
+  var btns='';
+  if(isIOS()) btns+='<button class="btn btn-primary btn-block" data-action="do-mpu">'+ic('printer')+' Imprimir (Mobile Print Util)</button>';
+  if(isTouchShare()) btns+='<button class="btn btn-outline btn-block" style="margin-top:8px" data-action="do-share-img">'+ic('printer')+' Compartilhar imagem</button>';
+  btns+='<button class="btn '+(isIOS()?'btn-ghost':'btn-primary')+' btn-block" style="margin-top:8px" data-action="do-print">'+ic('printer')+' Impressão do sistema</button>'+
+    '<button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="close-modal">Fechar</button>';
+  modal('<h2 class="center">Cupom · Delivery</h2>'+cupomHTML(o,reimp)+'<div class="sticky-cta">'+btns+'</div>',true);
+  if(!isTouchShare()) setTimeout(function(){ try{ window.print(); }catch(e){} }, 400); // computador: imprime direto
 }
 on('do-print',function(){ window.print(); });
+on('do-mpu',function(){ if(UI._cupom) imprimirMPU(UI._cupom.o, UI._cupom.reimp); });
+on('do-share-img',function(){ if(UI._cupom) compartilharCupomImagem(UI._cupom.o, UI._cupom.reimp); });
 
 /* ===== Impressora Bluetooth (Android Chrome / Web Bluetooth) — imprime direto na KP-1025 (58mm ESC/POS), sem app ===== */
 var BTP = { device:null, char:null };
@@ -1125,9 +1131,8 @@ function escposCupom(o,reimp){
 function isTouchShare(){ return typeof navigator!=='undefined' && !!navigator.canShare && (((navigator.maxTouchPoints||0)>0) || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent||'')); }
 function dataURLtoFile(durl,name){ var a=durl.split(','), mime=((a[0].match(/:(.*?);/)||[])[1])||'image/png', bin=atob(a[1]), n=bin.length, u=new Uint8Array(n); while(n--) u[n]=bin.charCodeAt(n); return new File([u], name, {type:mime}); }
 function wrapLine(s,w){ s=foldAscii(String(s)); var out=[], line=''; s.split(' ').forEach(function(word){ while(word.length>w){ if(line){ out.push(line); line=''; } out.push(word.slice(0,w)); word=word.slice(w); } var t=line?line+' '+word:word; if(t.length>w){ if(line) out.push(line); line=word; } else line=t; }); if(line) out.push(line); return out.length?out:['']; }
-function cupomCanvas(o,reimp){
-  var W=384, PAD=6, COLS=32, S=19;             // 58mm util = 384 dots; 32 col monoespacado ~19px
-  var rows=[];
+function cupomRows(o,reimp){
+  var COLS=32, S=19, rows=[];               // 58mm util = 384 dots; 32 col monoespacado ~19px
   function row(t,size,bold,align){ rows.push({t:t,size:size||S,bold:!!bold,align:align||'left'}); }
   function body(t,bold){ wrapLine(t,COLS).forEach(function(l){ row(l,S,bold,'left'); }); }
   function sep(){ row('--------------------------------',S,false,'left'); }
@@ -1156,6 +1161,10 @@ function cupomCanvas(o,reimp){
   if(trocoInfo(o).dev>0) row(ln2('TROCO devolver', money(trocoInfo(o).dev)),S,true);
   if(o.obs) body('Obs.: '+o.obs);
   sep(); row('Levar este cupom a cozinha',S,false,'center');
+  return rows;
+}
+function cupomCanvas(o,reimp){
+  var W=384, PAD=6, rows=cupomRows(o,reimp);
   function lh(sz){ return Math.round(sz*1.32); }
   var H=PAD*2; rows.forEach(function(r){ H+=lh(r.size); });
   var cv=document.createElement('canvas'); cv.width=W; cv.height=H;
@@ -1169,6 +1178,18 @@ function cupomCanvas(o,reimp){
     g.fillText(r.t, tx, y); y+=lh(r.size);
   });
   return cv;
+}
+/* HTML autocontido (monoespacado 58mm) pro Mobile Print Util renderizar via #deb64# */
+function cupomHTMLthermal(o,reimp){
+  var rows=cupomRows(o,reimp), h='<div style="width:384px;max-width:100%;padding:6px;font-family:\'Courier New\',monospace;color:#000;background:#fff">';
+  rows.forEach(function(r){ h+='<div style="font-size:'+r.size+'px;line-height:1.3;white-space:pre;'+(r.bold?'font-weight:bold;':'')+(r.align==='center'?'text-align:center;':'')+'">'+esc(r.t)+'</div>'; });
+  return h+'</div>';
+}
+function isIOS(){ return typeof navigator!=='undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent||''); }
+/* iPhone: abre o Mobile Print Util (grátis) com o cupom em HTML base64 e ele imprime na KP-1025 */
+function imprimirMPU(o,reimp){
+  try{ var b64=btoa(unescape(encodeURIComponent(cupomHTMLthermal(o,reimp)))); window.location.href='com.samathosoft.webprint://#deb64#'+b64; return true; }
+  catch(e){ return false; }
 }
 function compartilharCupomImagem(o,reimp){
   try{
@@ -1184,9 +1205,10 @@ function compartilharCupomImagem(o,reimp){
 /* imprime: Bluetooth do Android manda direto; iPhone/celular compartilha a imagem 58mm pro app; computador usa a impressao do sistema */
 function imprimirCupom(o,reimp){
   if(btpConectado()){ return btpWrite(escposCupom(o,reimp)).then(function(){ toast('Cupom enviado a impressora','ok'); }, function(){ toast('Falha na impressora, abrindo impressao do sistema','info'); abrirCupom(o,reimp); }); }
-  if(btpSupported() && BTP.device){ return btpReconnect().then(function(ok){ if(ok){ return btpWrite(escposCupom(o,reimp)).then(function(){ toast('Cupom enviado a impressora','ok'); }); } if(isTouchShare()&&compartilharCupomImagem(o,reimp)) return; abrirCupom(o,reimp); }); }
-  if(isTouchShare() && compartilharCupomImagem(o,reimp)) return;
-  abrirCupom(o,reimp);
+  if(btpSupported() && BTP.device){ return btpReconnect().then(function(ok){ if(ok){ return btpWrite(escposCupom(o,reimp)).then(function(){ toast('Cupom enviado a impressora','ok'); }); } if(isIOS()&&imprimirMPU(o,reimp)) return; if(isTouchShare()&&compartilharCupomImagem(o,reimp)) return; abrirCupom(o,reimp); }); }
+  if(isIOS() && imprimirMPU(o,reimp)) return;                      // iPhone: Mobile Print Util (grátis)
+  if(isTouchShare() && compartilharCupomImagem(o,reimp)) return;   // outros celulares: compartilhar imagem
+  abrirCupom(o,reimp);                                             // computador: impressão do sistema
 }
 on('adm-bt-connect',function(){ btpConnect(); });
 on('adm-bt-disconnect',function(){ btpDisconnect(); });
@@ -1306,7 +1328,7 @@ function admImpressao(){
       ? '<div class="card"><div class="dp-line"><span>Impressora Bluetooth</span><strong>'+(btpConectado()?'Conectada':'Desconectada')+'</strong></div>'+
         '<button class="btn '+(btpConectado()?'btn-outline':'btn-primary')+' btn-block" data-action="'+(btpConectado()?'adm-bt-disconnect':'adm-bt-connect')+'">'+ic('printer')+(btpConectado()?' Desconectar impressora':' Conectar impressora Bluetooth')+'</button>'+
         '<p class="muted" style="margin-top:8px">No Android (Chrome): toque em Conectar, escolha a <strong>KP-1025</strong> e pronto. Depois, "Aceitar e imprimir" já sai na hora, sem app.</p></div>'
-      : '<div class="notice info">'+ic('info')+'<div><strong>No iPhone:</strong> ao tocar em "Aceitar e imprimir", abre a tela de Compartilhar. Escolha o app <strong>Simple Bluetooth Printer</strong> (com a KP-1025 já pareada nele) e o cupom sai em 58mm. Deixe o app aberto e pareado no balcão.</div></div>')+
+      : '<div class="notice info">'+ic('info')+'<div><strong>No iPhone:</strong> instale o app grátis <strong>Mobile Print Util</strong> e pareie a KP-1025 nele uma vez. Depois, ao tocar em "Aceitar e imprimir", o iPhone abre o app e o cupom sai em 58mm (2 a 3 toques). Deixe o app pareado no balcão.</div></div>')+
     '<div class="notice warn">'+ic('warn')+'<div>Como o celular não confirma se o papel saiu, todo pedido tem "Reimprimir cupom", e a 2ª via vem marcada como REIMPRESSÃO pra não duplicar produção.</div></div>';
 }
 function admRelatorios(){
