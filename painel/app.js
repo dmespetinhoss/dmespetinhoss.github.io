@@ -148,6 +148,7 @@ function seed(){
     produtos.push(novo({nome:r[0],preco:r[1],cat:'acai',hue:H.acai,desc:r[2]})); });
   [['Refrigerante 1L',10,'Refrigerante gelado, 1 litro.'],['Refrigerante 600ml',8,'Refrigerante gelado, 600ml.'],['Refrigerante Lata',5,'Refrigerante gelado, lata 350ml.'],['Suco Natural 300ml',8,'Suco natural, copo de 300ml.'],['Skol Lata',5,'Cerveja Skol gelada, lata.'],['Coronita',9,'Coronita bem gelada.'],['Corona',11,'Corona long neck gelada.'],['Stella Gold',10,'Stella Artois Gold gelada.'],['Stella',10,'Stella Artois gelada.'],['Budweiser',10,'Budweiser gelada.'],['Heineken',11,'Heineken long neck gelada.'],['Amstel Lata',5,'Cerveja Amstel gelada, lata.'],['Original Lata',6,'Cerveja Original gelada, lata.']].forEach(function(r){
     produtos.push(novo({nome:r[0],preco:r[1],cat:'bebida',hue:H.bebida,desc:r[2]})); });
+  produtos.push(novo({nome:'Jarra de Suco 750ml',preco:16,cat:'bebida',hue:H.bebida,desc:'Jarra de suco natural 750ml. Escolha o sabor.'})); // sabores Acerola/Maracujá/Laranja via normalizarCardapio
   // Hambúrgueres (Especial/Simples, com e sem batata)
   produtos.push(novo({nome:'Hambúrguer Especial',preco:27.99,cat:'hamburguer',hue:25,desc:'Blend de carne 160g, bacon, queijo (mussarela ou cheddar), abacaxi, cebola caramelizada com mel, costela desfiada e salada.',variacoes:[{nome:'Sem batata',preco:27.99},{nome:'Com batata',preco:31.99}]}));
   produtos.push(novo({nome:'Hambúrguer Simples',preco:19.99,cat:'hamburguer',hue:25,desc:'Blend de carne 160g, queijo (mussarela ou cheddar), bacon, cebola e salada.',variacoes:[{nome:'Sem batata',preco:19.99},{nome:'Com batata',preco:24.99}]}));
@@ -304,6 +305,7 @@ function descontoValor(sub){ return UI.cupom&&UI.cupom.pct ? Math.round(sub*UI.c
 function waLink(tel,msg){ return 'https://wa.me/55'+String(tel).replace(/\D/g,'')+(msg?'?text='+encodeURIComponent(msg):''); }
 var FEIJOES=['Feijão tropeiro','Feijão de caldo'];
 var SABORES_REFRI=['Coca-cola','Guaraná'];
+var SABORES_SUCO=['Acerola','Maracujá','Laranja'];
 function trocoInfo(o){
   var t=parseFloat(String((o&&o.pay&&o.pay.troco)||'').replace(',','.'))||0;
   var dev=(t>0 && t>=(o.total||0)) ? (t-(o.total||0)) : 0;
@@ -334,6 +336,7 @@ function normalizarCardapio(s){
     var nome=String(p.nome||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
     var semPrecoNoite = (nome==='picanha' || nome==='file de peixe'); // preço igual no almoço e na janta
     if(nome.indexOf('refrigerante')===0){ p.sabores=SABORES_REFRI.slice(); } // Coca-cola ou Guaraná
+    if(nome.indexOf('jarra')===0){ p.sabores=SABORES_SUCO.slice(); } // Acerola, Maracujá ou Laranja (não afeta "Suco Natural")
     (p.variacoes||[]).forEach(function(v){
       if(v.nome==='Completo'){
         v.feijao=true; if(v.inclui) v.inclui=v.inclui.filter(function(x){ return !/feij/i.test(x); });
