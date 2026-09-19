@@ -1053,6 +1053,144 @@ function abrirCupom(o,reimp){
 }
 on('do-print',function(){ window.print(); });
 
+/* ===== Impressora Bluetooth (Android Chrome / Web Bluetooth) — imprime direto na KP-1025 (58mm ESC/POS), sem app ===== */
+var BTP = { device:null, char:null };
+var BTP_SVC='000018f0-0000-1000-8000-00805f9b34fb', BTP_CHR='00002af1-0000-1000-8000-00805f9b34fb';
+function btpSupported(){ return typeof navigator!=='undefined' && !!navigator.bluetooth; }
+function btpConectado(){ return !!(BTP.char && BTP.device && BTP.device.gatt && BTP.device.gatt.connected); }
+function btpConnect(){
+  if(!btpSupported()){ toast('Este aparelho não imprime por Bluetooth. Use um Android no Chrome.','err'); return; }
+  navigator.bluetooth.requestDevice({ filters:[{services:[BTP_SVC]}], optionalServices:[BTP_SVC] })
+    .then(function(dev){ BTP.device=dev; try{ dev.addEventListener('gattserverdisconnected',function(){ BTP.char=null; render(); }); }catch(e){} return dev.gatt.connect(); })
+    .then(function(server){ return server.getPrimaryService(BTP_SVC); })
+    .then(function(svc){ return svc.getCharacteristic(BTP_CHR); })
+    .then(function(ch){ BTP.char=ch; toast('Impressora conectada','ok'); render(); })
+    .catch(function(e){ var m=(e&&(e.message||e.name))||''; if(/cancel|User cancelled/i.test(m)) return; toast('Não conectou na impressora: '+m,'err'); });
+}
+function btpDisconnect(){ try{ if(BTP.device&&BTP.device.gatt&&BTP.device.gatt.connected) BTP.device.gatt.disconnect(); }catch(e){} BTP.char=null; BTP.device=null; toast('Impressora desconectada','info'); render(); }
+function btpReconnect(){
+  if(btpConectado()) return Promise.resolve(true);
+  if(BTP.device && BTP.device.gatt){ return BTP.device.gatt.connect().then(function(s){return s.getPrimaryService(BTP_SVC);}).then(function(sv){return sv.getCharacteristic(BTP_CHR);}).then(function(c){BTP.char=c;return true;}).catch(function(){return false;}); }
+  return Promise.resolve(false);
+}
+function btpWrite(bytes){
+  if(!BTP.char) return Promise.reject(new Error('sem impressora'));
+  var CH=100, i=0;
+  function step(){ if(i>=bytes.length) return Promise.resolve(); var slice=bytes.slice(i, i+CH); i+=CH; return BTP.char.writeValue(slice).then(function(){ return new Promise(function(r){ setTimeout(r,20); }); }).then(step); }
+  return step();
+}
+/* monta os bytes ESC/POS do cupom (acentos removidos p/ nao sair embaralhado em impressora barata) */
+function foldAscii(s){ return String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^\x20-\x7E]/g,'?'); }
+function ln2(a,b){ a=foldAscii(String(a)); b=foldAscii(String(b)); var sp=32-a.length-b.length; if(sp<1){ a=a.slice(0,Math.max(0,31-b.length)); sp=Math.max(1,32-a.length-b.length); } var pad=''; while(pad.length<sp)pad+=' '; return a+pad+b; }
+function escposCupom(o,reimp){
+  var B=[];
+  function raw(){ for(var i=0;i<arguments.length;i++) B.push(arguments[i]&0xFF); }
+  function txt(s){ s=foldAscii(s); for(var i=0;i<s.length;i++) B.push(s.charCodeAt(i)&0xFF); }
+  function nl(n){ n=n||1; while(n-->0) B.push(0x0A); }
+  function center(){ raw(0x1B,0x61,0x01); } function left(){ raw(0x1B,0x61,0x00); }
+  function bold(on){ raw(0x1B,0x45,on?1:0); }
+  function big(on){ raw(0x1D,0x21,on?0x11:0x00); }
+  var SEP='--------------------------------';
+  raw(0x1B,0x40);                       // init
+  center(); big(true); bold(true); txt('DM ESPETINHO'); nl(); big(false);
+  txt('-- DELIVERY --'); nl(); bold(false);
+  txt('CUPOM DE COZINHA'); nl();
+  txt(reimp?'*** REIMPRESSAO ***':'ORIGINAL'); nl();
+  big(true); txt(o.id); nl(); big(false);
+  left(); txt(SEP); nl();
+  txt(ln2(o.dia, o.criadoEm)); nl();
+  bold(true); txt(ln2('Tipo', o.tipo==='delivery'?'ENTREGA':'RETIRADA')); nl(); bold(false);
+  txt('Cliente: '+o.nome); nl();
+  txt('Fone: '+o.tel); nl();
+  if(o.tipo==='delivery'){ txt('End.: '+o.end+' - '+bairroLabel(o)); nl(); }
+  txt(SEP); nl();
+  (o.itens||[]).forEach(function(i){
+    var base=[]; if(i.varNome) base.push(i.varNome); (i.adics||[]).forEach(function(a){ base.push((a.qty>1?a.qty+'x ':'+ ')+a.nome); });
+    var obs=[]; if(i.feijao) obs.push(i.feijao); if(i.sabor) obs.push(i.sabor); if(i.obs) obs.push(i.obs);
+    bold(true); txt(ln2(i.qty+'x '+i.nome, money(i.preco*i.qty))); nl(); bold(false);
+    if(base.length){ txt('  '+base.join(' / ')); nl(); }
+    if(obs.length){ txt('  OBS: '+obs.join(' / ')); nl(); }
+  });
+  txt(SEP); nl();
+  bold(true); txt(ln2('TOTAL', o.entregaSobConsulta?money(o.subtotal)+'+ent':money(o.total))); nl(); bold(false);
+  txt(ln2('Pagto', o.pay.label)); nl();
+  if(o.pay.troco){ txt(ln2('Troco p/', money(o.pay.troco))); nl(); }
+  if(trocoInfo(o).dev>0){ bold(true); txt(ln2('TROCO devolver', money(trocoInfo(o).dev))); nl(); bold(false); }
+  if(o.obs){ txt('Obs.: '+o.obs); nl(); }
+  txt(SEP); nl();
+  center(); txt('Levar este cupom a cozinha'); nl(4);
+  return new Uint8Array(B);
+}
+/* ---- iPhone: gera o cupom como IMAGEM 58mm (384px) e compartilha pro app de impressora (Simple Bluetooth Printer / BR RawPrinter etc.) ---- */
+function isTouchShare(){ return typeof navigator!=='undefined' && !!navigator.canShare && (((navigator.maxTouchPoints||0)>0) || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent||'')); }
+function dataURLtoFile(durl,name){ var a=durl.split(','), mime=((a[0].match(/:(.*?);/)||[])[1])||'image/png', bin=atob(a[1]), n=bin.length, u=new Uint8Array(n); while(n--) u[n]=bin.charCodeAt(n); return new File([u], name, {type:mime}); }
+function wrapLine(s,w){ s=foldAscii(String(s)); var out=[], line=''; s.split(' ').forEach(function(word){ while(word.length>w){ if(line){ out.push(line); line=''; } out.push(word.slice(0,w)); word=word.slice(w); } var t=line?line+' '+word:word; if(t.length>w){ if(line) out.push(line); line=word; } else line=t; }); if(line) out.push(line); return out.length?out:['']; }
+function cupomCanvas(o,reimp){
+  var W=384, PAD=6, COLS=32, S=19;             // 58mm util = 384 dots; 32 col monoespacado ~19px
+  var rows=[];
+  function row(t,size,bold,align){ rows.push({t:t,size:size||S,bold:!!bold,align:align||'left'}); }
+  function body(t,bold){ wrapLine(t,COLS).forEach(function(l){ row(l,S,bold,'left'); }); }
+  function sep(){ row('--------------------------------',S,false,'left'); }
+  row('DM ESPETINHO',34,true,'center');
+  row('-- DELIVERY --',22,false,'center');
+  row('CUPOM DE COZINHA',20,false,'center');
+  row(reimp?'*** REIMPRESSAO ***':'ORIGINAL',20,true,'center');
+  row(foldAscii(o.id),28,true,'center');
+  sep();
+  row(ln2(o.dia,o.criadoEm),S,false);
+  row(ln2('Tipo', o.tipo==='delivery'?'ENTREGA':'RETIRADA'),S,true);
+  body('Cliente: '+o.nome); body('Fone: '+o.tel);
+  if(o.tipo==='delivery') body('End.: '+o.end+' - '+bairroLabel(o));
+  sep();
+  (o.itens||[]).forEach(function(i){
+    var base=[]; if(i.varNome) base.push(i.varNome); (i.adics||[]).forEach(function(a){ base.push((a.qty>1?a.qty+'x ':'+ ')+a.nome); });
+    var obs=[]; if(i.feijao) obs.push(i.feijao); if(i.sabor) obs.push(i.sabor); if(i.obs) obs.push(i.obs);
+    row(ln2(i.qty+'x '+foldAscii(i.nome), money(i.preco*i.qty)),S,true);
+    if(base.length) body('  '+base.join(' / '));
+    if(obs.length) body('  OBS: '+obs.join(' / '),true);
+  });
+  sep();
+  row(ln2('TOTAL', o.entregaSobConsulta?money(o.subtotal)+'+ent':money(o.total)),S,true);
+  row(ln2('Pagto', o.pay.label),S,false);
+  if(o.pay.troco) row(ln2('Troco p/', money(o.pay.troco)),S,false);
+  if(trocoInfo(o).dev>0) row(ln2('TROCO devolver', money(trocoInfo(o).dev)),S,true);
+  if(o.obs) body('Obs.: '+o.obs);
+  sep(); row('Levar este cupom a cozinha',S,false,'center');
+  function lh(sz){ return Math.round(sz*1.32); }
+  var H=PAD*2; rows.forEach(function(r){ H+=lh(r.size); });
+  var cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  var g=cv.getContext('2d');
+  g.fillStyle='#fff'; g.fillRect(0,0,W,H);
+  g.fillStyle='#000'; g.textBaseline='top';
+  var y=PAD;
+  rows.forEach(function(r){
+    g.font=(r.bold?'bold ':'')+r.size+'px Menlo, "Courier New", monospace';
+    var tx=PAD; if(r.align==='center'){ var tw=g.measureText(r.t).width; tx=Math.max(PAD,(W-tw)/2); }
+    g.fillText(r.t, tx, y); y+=lh(r.size);
+  });
+  return cv;
+}
+function compartilharCupomImagem(o,reimp){
+  try{
+    var cv=cupomCanvas(o,reimp);
+    var file=dataURLtoFile(cv.toDataURL('image/png'),'cupom-'+String(o.id).replace(/\W/g,'')+'.png');
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      navigator.share({files:[file]}).then(function(){ toast('Escolha o app da impressora','info'); }, function(){});
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+/* imprime: Bluetooth do Android manda direto; iPhone/celular compartilha a imagem 58mm pro app; computador usa a impressao do sistema */
+function imprimirCupom(o,reimp){
+  if(btpConectado()){ return btpWrite(escposCupom(o,reimp)).then(function(){ toast('Cupom enviado a impressora','ok'); }, function(){ toast('Falha na impressora, abrindo impressao do sistema','info'); abrirCupom(o,reimp); }); }
+  if(btpSupported() && BTP.device){ return btpReconnect().then(function(ok){ if(ok){ return btpWrite(escposCupom(o,reimp)).then(function(){ toast('Cupom enviado a impressora','ok'); }); } if(isTouchShare()&&compartilharCupomImagem(o,reimp)) return; abrirCupom(o,reimp); }); }
+  if(isTouchShare() && compartilharCupomImagem(o,reimp)) return;
+  abrirCupom(o,reimp);
+}
+on('adm-bt-connect',function(){ btpConnect(); });
+on('adm-bt-disconnect',function(){ btpDisconnect(); });
+
 /* Cardápio (admin) */
 function admCardapio(){
   var admin=isAdmin();
@@ -1160,9 +1298,15 @@ function admPagamentos(){
     '<div class="notice info">'+ic('info')+'<div>O sistema nunca guarda dados de cartão. Pix automático (confirmação sozinha) é a próxima fase.</div></div>';
 }
 function admImpressao(){
+  var androidBt=btpSupported();
   return '<div class="pagehead"><h2>Impressão</h2></div>'+
-    '<div class="card"><p class="muted" style="margin-top:0">Teste como o cupom de cozinha vai sair na impressora.</p>'+
+    '<div class="card"><p class="muted" style="margin-top:0">Toque para imprimir um cupom de teste e conferir na impressora.</p>'+
     '<button class="btn btn-primary btn-block" data-action="adm-test-print">'+ic('printer')+' Imprimir cupom de teste</button></div>'+
+    (androidBt
+      ? '<div class="card"><div class="dp-line"><span>Impressora Bluetooth</span><strong>'+(btpConectado()?'Conectada':'Desconectada')+'</strong></div>'+
+        '<button class="btn '+(btpConectado()?'btn-outline':'btn-primary')+' btn-block" data-action="'+(btpConectado()?'adm-bt-disconnect':'adm-bt-connect')+'">'+ic('printer')+(btpConectado()?' Desconectar impressora':' Conectar impressora Bluetooth')+'</button>'+
+        '<p class="muted" style="margin-top:8px">No Android (Chrome): toque em Conectar, escolha a <strong>KP-1025</strong> e pronto. Depois, "Aceitar e imprimir" já sai na hora, sem app.</p></div>'
+      : '<div class="notice info">'+ic('info')+'<div><strong>No iPhone:</strong> ao tocar em "Aceitar e imprimir", abre a tela de Compartilhar. Escolha o app <strong>Simple Bluetooth Printer</strong> (com a KP-1025 já pareada nele) e o cupom sai em 58mm. Deixe o app aberto e pareado no balcão.</div></div>')+
     '<div class="notice warn">'+ic('warn')+'<div>Como o celular não confirma se o papel saiu, todo pedido tem "Reimprimir cupom", e a 2ª via vem marcada como REIMPRESSÃO pra não duplicar produção.</div></div>';
 }
 function admRelatorios(){
@@ -1424,8 +1568,8 @@ function guard(o,st){ if(!o||st.indexOf(o.status)<0){ toast('Ação indisponíve
 on('adm-aprovar-pix',function(d){ var o=order(d.id); if(!guard(o,['em_validacao']))return; o.pay.status='aprovado'; o.status='aguardando_aceite'; addHist(o,'Aprovou o Pix'); audit('Aprovou Pix '+o.id,o.id); save(); toast('Pix confirmado. Agora aceite e imprima.','ok'); render(); });
 on('adm-solicitar-comprov',function(d){ var o=order(d.id); if(!guard(o,['em_validacao']))return; o.status='aguardando_comprovante'; o.pay.status='pendente'; addHist(o,'Pediu novo comprovante'); save(); toast('Cliente vai poder reenviar o comprovante','info'); render(); });
 on('adm-recusar',function(d){ var o=order(d.id); if(!guard(o,['em_validacao','aguardando_comprovante','aguardando_aceite']))return; pedirMotivo('Recusar pedido',['Comprovante ilegível','Valor divergente','Fora da área de entrega','Produto indisponível'],function(m){ o.status='recusado'; o.pay.motivoRecusa=m; addHist(o,'Recusou: '+m); audit('Recusou '+o.id,o.id); save(); toast('Pedido recusado','err'); render(); }); });
-on('adm-aceitar',function(d){ var o=order(d.id); if(!guard(o,['aguardando_aceite']))return; o.status='em_preparo'; o.reimpressoes=0; addHist(o,'Aceitou e imprimiu o cupom'); audit('Aceitou '+o.id,o.id); save(); abrirCupom(o,false); toast('Pedido aceito. Foi para a cozinha.','ok'); });
-on('adm-reimprimir',function(d){ var o=order(d.id); if(!o)return; o.reimpressoes=(o.reimpressoes||0)+1; addHist(o,'Reimprimiu (via '+(o.reimpressoes+1)+')'); save(); abrirCupom(o,true); });
+on('adm-aceitar',function(d){ var o=order(d.id); if(!guard(o,['aguardando_aceite']))return; o.status='em_preparo'; o.reimpressoes=0; addHist(o,'Aceitou e imprimiu o cupom'); audit('Aceitou '+o.id,o.id); save(); imprimirCupom(o,false); toast('Pedido aceito. Foi para a cozinha.','ok'); });
+on('adm-reimprimir',function(d){ var o=order(d.id); if(!o)return; o.reimpressoes=(o.reimpressoes||0)+1; addHist(o,'Reimprimiu (via '+(o.reimpressoes+1)+')'); save(); imprimirCupom(o,true); });
 on('adm-pronto',function(d){ var o=order(d.id); if(!guard(o,['em_preparo']))return; o.status='pronto'; addHist(o,'Marcou como pronto'); save(); toast('Pedido pronto','ok'); render(); });
 on('adm-saiu',function(d){ var o=order(d.id); if(!guard(o,['pronto']))return; if(o.tipo!=='delivery'){ toast('Retirada não sai para entrega','err'); return; } o.status='saiu'; addHist(o,'Saiu para entrega'); save(); toast('Saiu para entrega','ok'); render(); });
 on('adm-concluir',function(d){ var o=order(d.id); if(!guard(o,['pronto','saiu']))return; o.status='concluido'; if(o.pay.metodo!=='pix')o.pay.status='recebido'; addHist(o,'Concluiu o pedido'); audit('Concluiu '+o.id,o.id); save(); toast('Pedido concluído','ok'); render(); });
@@ -1533,7 +1677,7 @@ on('adm-jan-rm',function(d){ if(!needAdmin())return; var js=_janelasAtuais(); js
 on('adm-save-horarios',function(){ if(!needAdmin())return; var js=[]; for(var i=0;;i++){ var a=$('jr-a'+i), b=$('jr-b'+i); if(!a||!b) break; if(a.value&&b.value) js.push([a.value,b.value]); } if(!js.length){ toast('Adicione pelo menos uma janela de horário','err'); return; } S.loja.janelas=js; S.loja.horario=fmtJanelas(js); save(); toast('Horários salvos','ok'); render(); });
 on('adm-toggle-pag',function(d){ S.loja[d.k]=!S.loja[d.k]; render(); });
 on('adm-save-pag',function(){ if(!needAdmin())return; S.loja.pixKey=$('pg-key').value; S.loja.pixNome=$('pg-nome').value; save(); toast('Pagamentos salvos','ok'); });
-on('adm-test-print',function(){ var demo={id:'#TESTE',dia:hoje(),criadoEm:nowHM(),tipo:'delivery',nome:'Cliente Teste',tel:'(00) 00000-0000',end:'Rua de Teste, 1',bairro:'Centro',entregaSobConsulta:false,itens:[{qty:2,nome:'Espetinho de Carne',preco:8,adic:[],obs:'',opc:{}}],total:16,subtotal:16,pay:{label:'Pix',troco:''},obs:''}; abrirCupom(demo,false); });
+on('adm-test-print',function(){ var demo={id:'#TESTE',dia:hoje(),criadoEm:nowHM(),tipo:'delivery',nome:'Cliente Teste',tel:'(00) 00000-0000',end:'Rua de Teste, 1',bairro:'Centro',entregaSobConsulta:false,itens:[{qty:2,nome:'Espetinho de Carne',preco:8,adic:[],obs:'',opc:{}}],total:16,subtotal:16,pay:{label:'Pix',troco:''},obs:''}; imprimirCupom(demo,false); });
 on('adm-rel-per',function(d){ UI.adm.relPer=d.p; render(); });
 /* clientes */
 on('cli-busca',function(d,t){ UI.adm.cliQ=t.value; var sc=document.querySelector('.adm-scroll'); var st=sc?sc.scrollTop:0; render(); sc=document.querySelector('.adm-scroll'); if(sc)sc.scrollTop=st; var inp=document.querySelector('[data-oninput="cli-busca"]'); if(inp){ var v=inp.value; inp.focus(); inp.value=''; inp.value=v; } });
