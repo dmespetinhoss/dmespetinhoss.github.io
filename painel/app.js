@@ -154,7 +154,7 @@ function seed(){
   // Caldos
   produtos.push(novo({nome:'Caldo de Costela',preco:18,cat:'caldos',hue:20,desc:'Caldo de costela encorpado e bem temperado.'}));
   // Panelada
-  produtos.push(novo({nome:'Panelada',preco:22,cat:'panelada',hue:15,desc:'Panelada tradicional, no capricho.'}));
+  produtos.push(novo({nome:'Panelada',preco:18,cat:'panelada',hue:15,desc:'Panelada tradicional, no capricho.',variacoes:[{nome:'Simples (500ml)',preco:18},{nome:'Completa',preco:22,inclui:['Arroz']}]}));
   // Petiscos
   produtos.push(novo({nome:'Batata Frita',preco:22,cat:'petiscos',hue:45,desc:'Porção de batata frita crocante e sequinha.'}));
   var categorias = [
