@@ -16,6 +16,8 @@ var SUPA_URL = 'https://qnsivomwbuftjxkwalcw.supabase.co';
 var SUPA_KEY = 'sb_publishable_Tv03zqfFDSIqCwj6029Usg_cJhQ6kih';
 var CLOUD = !!(SUPA_URL && SUPA_KEY && typeof window!=='undefined' && window.supabase);
 var sb = CLOUD ? window.supabase.createClient(SUPA_URL, SUPA_KEY) : null;
+// modo vitrine: abrir com ?preview=1 mostra o cardápio do código (seed) SEM tocar na nuvem nem no site real
+var PREVIEW = (typeof location!=='undefined') && /[?&]preview=1/.test((location.search||''));
 var PERMITIR_PEDIDO_SEMPRE = false; // trava de horário ATIVA (uso oficial): cliente só finaliza dentro do expediente.
 var $  = function(id){ return document.getElementById(id); };
 var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); };
@@ -146,12 +148,27 @@ function seed(){
     produtos.push(novo({nome:r[0],preco:r[1],cat:'acai',hue:H.acai,desc:r[2]})); });
   [['Refrigerante 1L',10,'Refrigerante gelado, 1 litro.'],['Refrigerante 600ml',8,'Refrigerante gelado, 600ml.'],['Refrigerante Lata',5,'Refrigerante gelado, lata 350ml.'],['Suco Natural 300ml',8,'Suco natural, copo de 300ml.'],['Skol Lata',5,'Cerveja Skol gelada, lata.'],['Coronita',9,'Coronita bem gelada.'],['Corona',11,'Corona long neck gelada.'],['Stella Gold',10,'Stella Artois Gold gelada.'],['Stella',10,'Stella Artois gelada.'],['Budweiser',10,'Budweiser gelada.'],['Heineken',11,'Heineken long neck gelada.'],['Amstel Lata',5,'Cerveja Amstel gelada, lata.'],['Original Lata',6,'Cerveja Original gelada, lata.']].forEach(function(r){
     produtos.push(novo({nome:r[0],preco:r[1],cat:'bebida',hue:H.bebida,desc:r[2]})); });
+  // Hambúrgueres (Especial/Simples, com e sem batata)
+  produtos.push(novo({nome:'Hambúrguer Especial',preco:27.99,cat:'hamburguer',hue:25,desc:'Blend de carne 160g, bacon, queijo (mussarela ou cheddar), abacaxi, cebola caramelizada com mel, costela desfiada e salada.',variacoes:[{nome:'Sem batata',preco:27.99},{nome:'Com batata',preco:31.99}]}));
+  produtos.push(novo({nome:'Hambúrguer Simples',preco:19.99,cat:'hamburguer',hue:25,desc:'Blend de carne 160g, queijo (mussarela ou cheddar), bacon, cebola e salada.',variacoes:[{nome:'Sem batata',preco:19.99},{nome:'Com batata',preco:24.99}]}));
+  // Caldos
+  produtos.push(novo({nome:'Caldo de Costela',preco:18,cat:'caldos',hue:20,desc:'Caldo de costela encorpado e bem temperado.'}));
+  // Panelada
+  produtos.push(novo({nome:'Panelada',preco:22,cat:'panelada',hue:15,desc:'Panelada tradicional, no capricho.'}));
+  // Petiscos
+  produtos.push(novo({nome:'Batata Frita',preco:22,cat:'petiscos',hue:45,desc:'Porção de batata frita crocante e sequinha.'}));
   var categorias = [
-    {id:'espetos',nome:'Espetos',ordem:1,oculta:false},{id:'acomp',nome:'Acompanhamentos',ordem:2,oculta:false},
-    {id:'acai',nome:'Açaí',ordem:3,oculta:false},{id:'bebida',nome:'Bebidas',ordem:4,oculta:false}
+    {id:'espetos',nome:'Espetos',ordem:1,oculta:false},
+    {id:'hamburguer',nome:'Hambúrgueres',ordem:2,oculta:false},
+    {id:'caldos',nome:'Caldos',ordem:3,oculta:false},
+    {id:'panelada',nome:'Panelada',ordem:4,oculta:false},
+    {id:'petiscos',nome:'Petiscos',ordem:5,oculta:false},
+    {id:'acomp',nome:'Acompanhamentos',ordem:6,oculta:false},
+    {id:'acai',nome:'Açaí',ordem:7,oculta:false},
+    {id:'bebida',nome:'Bebidas',ordem:8,oculta:false}
   ];
   S = {
-    loja:{ nome:'DM Espetinho', pausado:false, janelas:[['11:00','15:00'],['18:00','23:00']], horario:'Seg a Dom · 11h-15h e 18h-23h',
+    loja:{ nome:'DM Espetinho', pausado:false, janelas:[['11:00','14:00'],['18:00','23:00']], horario:'Seg a Dom · 11h-14h e 18h-23h',
       endereco:'Av. Getúlio Vargas, em frente à Pague Menos', whats:'(64) 99279-1748',
       instagram:'@Dm_Espetinho_Distribuidora',
       pixKey:'01802000119', pixNome:'Denis Moreira de Bastos', pixCidade:'BREU BRANCO', banner:'',
@@ -200,7 +217,7 @@ function seedOrder(o){
 /* persistência */
 function persistLocal(){ if(APP_MODE==='admin') return; try{ localStorage.setItem(MEKEY, JSON.stringify(UI.me)); localStorage.setItem(CARTKEY, JSON.stringify(UI.cart)); }catch(e){} }
 function saveCliente(){ persistLocal(); if(CLOUD) cloudCliUpsert(); }   // salva perfil + carrinho do cliente (local + conta na nuvem)
-function save(){ try{ localStorage.setItem(LSKEY, JSON.stringify(S)); persistLocal(); if(CLOUD) cloudPush(); else marcarRev(); }catch(e){} }
+function save(){ if(PREVIEW) return; try{ localStorage.setItem(LSKEY, JSON.stringify(S)); persistLocal(); if(CLOUD) cloudPush(); else marcarRev(); }catch(e){} }
 
 /* ---- conta do cliente (login por WhatsApp, tabela 'clientes' no Supabase) ---- */
 function normWhats(t){ return String(t||'').replace(/\D/g,''); }
@@ -221,7 +238,7 @@ function refreshCliente(){
   });
 }
 function marcarRev(){ try{ lastRev=String(Date.now())+'-'+Math.floor(Math.random()*1e6); localStorage.setItem(REVKEY,lastRev); if(bc){ try{ bc.postMessage(lastRev); }catch(e){} } }catch(e){} }
-function reloadShared(){ try{ var raw=localStorage.getItem(LSKEY); if(raw){ var s=JSON.parse(raw); if(s&&s.produtos){ S=s; if(!S.promos)S.promos=[]; return true; } } }catch(e){} return false; }
+function reloadShared(){ if(PREVIEW) return false; try{ var raw=localStorage.getItem(LSKEY); if(raw){ var s=JSON.parse(raw); if(s&&s.produtos){ S=s; if(!S.promos)S.promos=[]; return true; } } }catch(e){} return false; }
 function syncCheck(){
   var ae=(typeof document!=='undefined')&&document.activeElement;
   if(ae && ae.tagName && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return; // não interrompe quem está digitando
@@ -230,7 +247,7 @@ function syncCheck(){
 }
 function load(){
   var had=false;
-  try{ var raw=localStorage.getItem(LSKEY); if(raw){ var s=JSON.parse(raw); if(s&&s.produtos){ S=s; if(!S.promos)S.promos=[]; had=true; } } }catch(e){}
+  if(!PREVIEW){ try{ var raw=localStorage.getItem(LSKEY); if(raw){ var s=JSON.parse(raw); if(s&&s.produtos){ S=s; if(!S.promos)S.promos=[]; had=true; } } }catch(e){} }
   try{ var m=localStorage.getItem(MEKEY); if(m){ var mm=JSON.parse(m); if(mm&&typeof mm==='object') UI.me=mm; } }catch(e){}
   if(APP_MODE!=='admin'){ try{ var ck=localStorage.getItem(CARTKEY); if(ck){ var ct=JSON.parse(ck); if(Array.isArray(ct)) UI.cart=ct; } }catch(e){} }
   return had;
@@ -261,7 +278,7 @@ function isAdmin(){ return UI.adm.user && UI.adm.user.papel==='admin'; }
 function telValido(t){ return String(t||'').replace(/\D/g,'').length>=10; }
 
 /* ---- horário de funcionamento (aberto/fechado automático, fuso de Breu Branco/PA) ---- */
-var DEFAULT_JANELAS=[['11:00','15:00'],['18:00','23:00']];
+var DEFAULT_JANELAS=[['11:00','14:00'],['18:00','23:00']];
 function hm(s){ var p=String(s||'0:0').split(':'); return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0); }
 function janelasLoja(){ var j=S.loja&&S.loja.janelas; return (j&&j.length)?j:DEFAULT_JANELAS; }
 function agoraMinLoja(){
@@ -286,6 +303,12 @@ function clockWatch(){ try{ var o=lojaAberta(); if(_lastOpen===null){ _lastOpen=
 function descontoValor(sub){ return UI.cupom&&UI.cupom.pct ? Math.round(sub*UI.cupom.pct*100)/100 : 0; }
 function waLink(tel,msg){ return 'https://wa.me/55'+String(tel).replace(/\D/g,'')+(msg?'?text='+encodeURIComponent(msg):''); }
 var FEIJOES=['Feijão tropeiro','Feijão de caldo'];
+var SABORES_REFRI=['Coca-cola','Guaraná'];
+function trocoInfo(o){
+  var t=parseFloat(String((o&&o.pay&&o.pay.troco)||'').replace(',','.'))||0;
+  var dev=(t>0 && t>=(o.total||0)) ? (t-(o.total||0)) : 0;
+  return { para:t, dev:dev };
+}
 /* ---- Pix EMV (BR Code) REAL: chave do Denis + valor exato do carrinho ---- */
 function pixTLV(id,v){ v=String(v); return id+('00'+v.length).slice(-2)+v; }
 function pixNorm(s,max){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Za-z0-9 ]/g,'').toUpperCase().trim().slice(0,max||25); }
@@ -310,6 +333,7 @@ function normalizarCardapio(s){
   s.produtos.forEach(function(p){
     var nome=String(p.nome||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
     var semPrecoNoite = (nome==='picanha' || nome==='file de peixe'); // preço igual no almoço e na janta
+    if(nome.indexOf('refrigerante')===0){ p.sabores=SABORES_REFRI.slice(); } // Coca-cola ou Guaraná
     (p.variacoes||[]).forEach(function(v){
       if(v.nome==='Completo'){
         v.feijao=true; if(v.inclui) v.inclui=v.inclui.filter(function(x){ return !/feij/i.test(x); });
@@ -467,9 +491,9 @@ function abrirProduto(id, editIdx){
   var vars=pdVars(p);
   if(editIdx!=null && UI.cart[editIdx]){ var it=UI.cart[editIdx];
     var vi = vars ? Math.max(0, vars.map(function(v){return v.nome;}).indexOf(it.varNome)) : -1;
-    pdSel={qty:it.qty, varIdx:vi, g:{}, obs:it.obs||'', edit:editIdx, feijao:it.feijao||null};
+    pdSel={qty:it.qty, varIdx:vi, g:{}, obs:it.obs||'', edit:editIdx, feijao:it.feijao||null, sabor:it.sabor||null};
     (p.grupos||[]).forEach(function(gr,gi){ pdSel.g[gi]={}; gr.itens.forEach(function(gt,ii){ var f=(it.adics||[]).filter(function(a){return a.nome===gt.nome;})[0]; if(f) pdSel.g[gi][ii]=f.qty; }); });
-  } else { pdSel={qty:1, varIdx: vars?0:-1, g:{}, obs:'', edit:null, feijao:null}; }
+  } else { pdSel={qty:1, varIdx: vars?0:-1, g:{}, obs:'', edit:null, feijao:null, sabor:null}; }
   UI._pdId=id; modal(pdHTML(p));
 }
 function pdBase(p){ var vars=pdVars(p); return vars ? varPreco(vars[pdSel.varIdx]) : p.preco; }
@@ -487,14 +511,19 @@ function pdHTML(p){
         return '<div class="opt'+(sel?' sel':'')+'" data-action="pd-var" data-v="'+i+'"><span class="ck">'+(sel?ic('check'):'')+'</span><span class="oname">'+esc(v.nome)+'</span><span class="oprice">'+money(varPreco(v))+'</span></div>';
       }).join('')+'</div>';
     if(varSel && varSel.inclui && varSel.inclui.length){
-      var acomp=varSel.inclui.slice(); if(varSel.feijao) acomp=acomp.concat([pdSel.feijao||FEIJOES[0]]);
+      var acomp=varSel.inclui.slice(); if(varSel.feijao) acomp=acomp.concat([ehNoite()?'Feijão tropeiro':(pdSel.feijao||FEIJOES[0])]);
       h+='<div class="incl">'+ic('checkc')+'<div><strong>Acompanha:</strong> '+acomp.map(esc).join(', ')+'.</div></div>';
     }
-    if(varSel && varSel.feijao){
+    if(varSel && varSel.feijao && !ehNoite()){   // à noite (janta, 18h+) vai só feijão tropeiro, sem escolha
       var fsel=pdSel.feijao||FEIJOES[0];
       h+='<div class="grp"><div class="grp-head"><strong>Escolha o feijão</strong><span class="grp-max">obrigatório</span></div>'+
         FEIJOES.map(function(f){ var s=fsel===f; return '<div class="opt'+(s?' sel':'')+'" data-action="pd-feijao" data-f="'+esc(f)+'"><span class="ck">'+(s?ic('check'):'')+'</span><span class="oname">'+esc(f)+'</span></div>'; }).join('')+'</div>';
     }
+  }
+  if(p.sabores && p.sabores.length){
+    var ssel=pdSel.sabor||p.sabores[0];
+    h+='<div class="grp"><div class="grp-head"><strong>Escolha o sabor</strong><span class="grp-max">obrigatório</span></div>'+
+      p.sabores.map(function(f){ var s=ssel===f; return '<div class="opt'+(s?' sel':'')+'" data-action="pd-sabor" data-f="'+esc(f)+'"><span class="ck">'+(s?ic('check'):'')+'</span><span class="oname">'+esc(f)+'</span></div>'; }).join('')+'</div>';
   }
   (p.grupos||[]).forEach(function(gr,gi){
     if(!gr.itens||!gr.itens.length) return;
@@ -518,6 +547,7 @@ function itemLines(it){
   var lines=[];
   if(it.varNome) lines.push(it.varNome);
   if(it.feijao) lines.push(it.feijao);
+  if(it.sabor) lines.push(it.sabor);
   (it.adics||[]).forEach(function(a){ lines.push((a.qty>1?a.qty+'x ':'+ ')+a.nome); });
   if(it.obs) lines.push('Obs.: '+it.obs);
   return lines;
@@ -700,7 +730,10 @@ function resumoPedidoBox(o){
      '<div class="dp-line"><span>Subtotal</span><span>'+money(o.subtotal)+'</span></div>'+
      (o.desconto>0?'<div class="dp-line"><span>Desconto'+(o.cupom?' ('+esc(o.cupom)+')':'')+'</span><span>- '+money(o.desconto)+'</span></div>':'')+
      (o.tipo==='delivery'?'<div class="dp-line"><span>Taxa</span><span>'+money(o.taxa)+'</span></div>':'')+
-     '<div class="dp-line big"><strong>Total</strong><strong class="gold">'+money(o.total)+'</strong></div></div>';
+     '<div class="dp-line big"><strong>Total</strong><strong class="gold">'+money(o.total)+'</strong></div>'+
+     (o.pay.troco?'<div class="dp-line"><span>Troco para</span><strong>'+money(o.pay.troco)+'</strong></div>':'')+
+     (trocoInfo(o).dev>0?'<div class="dp-line"><span>Troco a devolver</span><strong class="gold">'+money(trocoInfo(o).dev)+'</strong></div>':'')+
+     '</div>';
   return h;
 }
 
@@ -936,11 +969,12 @@ function admDetalhe(o){
      '<div class="dp-line"><span>Forma</span><strong>'+esc(o.pay.label)+'</strong></div>'+
      '<div class="dp-line"><span>Situação</span><strong>'+payStatusLabel(o)+'</strong></div>'+
      (o.pay.troco?'<div class="dp-line"><span>Troco para</span><strong>'+money(o.pay.troco)+'</strong></div>':'')+
+     (trocoInfo(o).dev>0?'<div class="dp-line"><span>Troco a devolver</span><strong class="gold">'+money(trocoInfo(o).dev)+'</strong></div>':'')+
      '<div class="dp-line"><span>Subtotal</span><span>'+money(o.subtotal)+'</span></div>'+
      (o.desconto>0?'<div class="dp-line"><span>Desconto'+(o.cupom?' ('+esc(o.cupom)+')':'')+'</span><span>- '+money(o.desconto)+'</span></div>':'')+
      (o.tipo==='delivery'?'<div class="dp-line"><span>Taxa de entrega</span><span>'+money(o.taxa)+'</span></div>':'')+
      '<div class="dp-line big"><strong>Total</strong><strong class="gold">'+money(o.total)+'</strong></div>'+
-     (o.pay.comprovante?'<div class="comprov-wrap"><div class="up-lb">Comprovante enviado:</div><img class="comprov" src="'+o.pay.comprovante+'"></div>':'')+'</div>';
+     (o.pay.comprovante?'<div class="comprov-wrap"><div class="up-lb">Comprovante enviado:</div><img class="comprov" src="'+o.pay.comprovante+'" data-action="ver-img" data-src="'+o.pay.comprovante+'"><div class="comprov-hint">'+ic('search')+' Toque para ampliar</div></div>':'')+'</div>';
   h+='<div class="actionbar">'+admAcoes(o)+'</div>';
   h+='<div class="dp-block"><h4>Histórico</h4>'+(o.historico||[]).map(function(x){
     return '<div class="dp-line"><span>'+esc(x.t)+' · '+esc(x.who)+'</span><span>'+esc(x.act)+'</span></div>';
@@ -986,7 +1020,7 @@ function admAcoes(o){
 function cupomHTML(o,reimp){
   var itens=o.itens.map(function(i){
     var base=[]; if(i.varNome) base.push(i.varNome); (i.adics||[]).forEach(function(a){ base.push((a.qty>1?a.qty+'x ':'+ ')+a.nome); });
-    var obs=[]; if(i.feijao) obs.push(i.feijao); if(i.obs) obs.push(i.obs);
+    var obs=[]; if(i.feijao) obs.push(i.feijao); if(i.sabor) obs.push(i.sabor); if(i.obs) obs.push(i.obs);
     return '<div class="tk-l"><span>'+i.qty+'x '+esc(i.nome)+'</span><span>'+money(i.preco*i.qty)+'</span></div>'+
       (base.length?'<div class="tk-obs">'+esc(base.join(' · '))+'</div>':'')+
       (obs.length?'<div class="tk-obs"><strong>OBS:</strong> '+esc(obs.join(' · '))+'</div>':'');
@@ -1003,6 +1037,7 @@ function cupomHTML(o,reimp){
     '<div class="tk-l"><strong>TOTAL</strong><strong>'+(o.entregaSobConsulta?money(o.subtotal)+'+ent':money(o.total))+'</strong></div>'+
     '<div class="tk-l"><span>Pagto</span><span>'+esc(o.pay.label)+'</span></div>'+
     (o.pay.troco?'<div class="tk-l"><span>Troco p/</span><span>'+money(o.pay.troco)+'</span></div>':'')+
+    (trocoInfo(o).dev>0?'<div class="tk-l"><strong>TROCO (devolver)</strong><strong>'+money(trocoInfo(o).dev)+'</strong></div>':'')+
     (o.obs?'<div class="tk-obs">Obs.: '+esc(o.obs)+'</div>':'')+
     '<hr><div class="tk-c">Levar este cupom a cozinha</div></div>';
 }
@@ -1204,6 +1239,14 @@ on('cli-prod',function(d){ abrirProduto(d.id); });
 on('cart-edit',function(d){ var i=+d.i; var it=UI.cart[i]; if(it) abrirProduto(it.prodId,i); });
 on('pd-var',function(d){ pdSel.varIdx=+d.v; patchPd(); });
 on('pd-feijao',function(d){ pdSel.feijao=d.f; patchPd(); });
+on('pd-sabor',function(d){ pdSel.sabor=d.f; patchPd(); });
+on('ver-img',function(d){
+  if(!d.src) return;
+  modal('<div class="imgzoom-wrap" data-action="img-zoom"><img class="imgzoom" src="'+d.src+'" alt="Comprovante"></div>'+
+    '<div class="imgzoom-cap">'+ic('search')+' Toque na imagem para ampliar ou reduzir</div>'+
+    '<div class="sticky-cta"><button class="btn btn-ghost btn-block" data-action="close-modal">Fechar</button></div>', true);
+});
+on('img-zoom',function(d,t){ if(t) t.classList.toggle('zoomed'); });
 on('pd-adic',function(d){ var g=+d.g, i=+d.i, dd=+d.d; var p=prod(UI._pdId); if(!p)return; var gr=(p.grupos||[])[g]; if(!gr)return;
   pdSel.g[g]=pdSel.g[g]||{}; var cur=pdSel.g[g][i]||0;
   if(dd>0 && gr.max>0 && grpSum(g)>=gr.max){ toast('Você pode escolher até '+gr.max+' em '+gr.nome,'err'); return; }
@@ -1219,8 +1262,9 @@ on('pd-add',function(d){
   var adics=[];
   (p.grupos||[]).forEach(function(gr,gi){ var sel=pdSel.g[gi]||{}; gr.itens.forEach(function(it,ii){ var q=sel[ii]||0; if(q>0) adics.push({nome:it.nome,preco:it.preco,qty:q}); }); });
   var unit=base+adics.reduce(function(a,x){return a+x.preco*x.qty;},0);
-  var feijao=(vars&&vars[pdSel.varIdx]&&vars[pdSel.varIdx].feijao)?(pdSel.feijao||FEIJOES[0]):null;
-  var item={prodId:p.id,nome:p.nome,cat:p.cat,hue:p.hue,foto:p.foto,base:base,varNome:varNome,inclui:inclui,adics:adics,feijao:feijao,qty:pdSel.qty,obs:pdSel.obs,preco:unit};
+  var feijao=(vars&&vars[pdSel.varIdx]&&vars[pdSel.varIdx].feijao)?(ehNoite()?'Feijão tropeiro':(pdSel.feijao||FEIJOES[0])):null;
+  var sabor=(p.sabores&&p.sabores.length)?(pdSel.sabor||p.sabores[0]):null;
+  var item={prodId:p.id,nome:p.nome,cat:p.cat,hue:p.hue,foto:p.foto,base:base,varNome:varNome,inclui:inclui,adics:adics,feijao:feijao,sabor:sabor,qty:pdSel.qty,obs:pdSel.obs,preco:unit};
   if(pdSel.edit!=null){ UI.cart[pdSel.edit]=item; toast('Item atualizado','ok'); }
   else { UI.cart.push(item); toast(pdSel.qty+'x '+p.nome+' na sacola','ok'); }
   saveCliente(); closeModal(); render();
@@ -1577,7 +1621,7 @@ function cloudBoot(){
   setInterval(cloudPull, 5000);   // reforço caso o tempo-real caia
 }
 
-if(CLOUD){
+if(CLOUD && !PREVIEW){
   cloudBoot();
   window.addEventListener('focus', function(){ cloudPull(); refreshCliente(); });
   if(typeof document!=='undefined') document.addEventListener('visibilitychange', function(){ if(!document.hidden){ cloudPull(); refreshCliente(); } });
