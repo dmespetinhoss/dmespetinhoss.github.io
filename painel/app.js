@@ -1062,21 +1062,40 @@ on('do-share-img',function(){ if(UI._cupom) compartilharCupomImagem(UI._cupom.o,
 /* ===== Impressora Bluetooth (Android Chrome / Web Bluetooth) — imprime direto na KP-1025 (58mm ESC/POS), sem app ===== */
 var BTP = { device:null, char:null };
 var BTP_SVC='000018f0-0000-1000-8000-00805f9b34fb', BTP_CHR='00002af1-0000-1000-8000-00805f9b34fb';
+// serviços de impressora térmica BLE conhecidos — algumas KP-1025 NÃO anunciam o serviço padrão (por isso o filtro antigo não achava);
+// listar em optionalServices libera o acesso a eles depois de conectar via acceptAllDevices.
+var BTP_OPT=[BTP_SVC,'0000ff00-0000-1000-8000-00805f9b34fb','0000ffe0-0000-1000-8000-00805f9b34fb','0000ffe5-0000-1000-8000-00805f9b34fb','49535343-fe7d-4ae5-8fa9-9fafd205e455','e7810a71-73ae-499d-8c15-faa9aef0c3f2'];
 function btpSupported(){ return typeof navigator!=='undefined' && !!navigator.bluetooth; }
 function btpConectado(){ return !!(BTP.char && BTP.device && BTP.device.gatt && BTP.device.gatt.connected); }
+// acha uma característica GRAVÁVEL: tenta o serviço/char padrão de impressora; senão varre os serviços conhecidos e pega a 1ª que dá pra escrever.
+function acharCharImpressora_(server){
+  return server.getPrimaryService(BTP_SVC)
+    .then(function(svc){ return svc.getCharacteristic(BTP_CHR); })
+    .catch(function(){
+      return server.getPrimaryServices().then(function(svcs){
+        return (function prox(i){
+          if(i>=svcs.length) return null;
+          return svcs[i].getCharacteristics().then(function(chs){
+            for(var k=0;k<chs.length;k++){ var p=chs[k].properties||{}; if(p.write||p.writeWithoutResponse) return chs[k]; }
+            return prox(i+1);
+          }).catch(function(){ return prox(i+1); });
+        })(0);
+      });
+    });
+}
 function btpConnect(){
   if(!btpSupported()){ toast('Este aparelho não imprime por Bluetooth. Use um Android no Chrome.','err'); return; }
-  navigator.bluetooth.requestDevice({ filters:[{services:[BTP_SVC]}], optionalServices:[BTP_SVC] })
+  // lista TODAS as impressoras (algumas não anunciam o serviço padrão) — o dono escolhe a KP-1025 na janela do Chrome
+  navigator.bluetooth.requestDevice({ acceptAllDevices:true, optionalServices:BTP_OPT })
     .then(function(dev){ BTP.device=dev; try{ dev.addEventListener('gattserverdisconnected',function(){ BTP.char=null; render(); }); }catch(e){} return dev.gatt.connect(); })
-    .then(function(server){ return server.getPrimaryService(BTP_SVC); })
-    .then(function(svc){ return svc.getCharacteristic(BTP_CHR); })
-    .then(function(ch){ BTP.char=ch; toast('Impressora conectada','ok'); render(); })
-    .catch(function(e){ var m=(e&&(e.message||e.name))||''; if(/cancel|User cancelled/i.test(m)) return; toast('Não conectou na impressora: '+m,'err'); });
+    .then(function(server){ return acharCharImpressora_(server); })
+    .then(function(ch){ if(!ch) throw new Error('essa impressora não tem canal de impressão compatível'); BTP.char=ch; toast('Impressora conectada','ok'); render(); })
+    .catch(function(e){ var m=(e&&(e.message||e.name))||''; if(/cancel|User cancelled|chooser/i.test(m)) return; toast('Não conectou na impressora: '+m,'err'); });
 }
 function btpDisconnect(){ try{ if(BTP.device&&BTP.device.gatt&&BTP.device.gatt.connected) BTP.device.gatt.disconnect(); }catch(e){} BTP.char=null; BTP.device=null; toast('Impressora desconectada','info'); render(); }
 function btpReconnect(){
   if(btpConectado()) return Promise.resolve(true);
-  if(BTP.device && BTP.device.gatt){ return BTP.device.gatt.connect().then(function(s){return s.getPrimaryService(BTP_SVC);}).then(function(sv){return sv.getCharacteristic(BTP_CHR);}).then(function(c){BTP.char=c;return true;}).catch(function(){return false;}); }
+  if(BTP.device && BTP.device.gatt){ return BTP.device.gatt.connect().then(function(s){return acharCharImpressora_(s);}).then(function(c){ if(!c) return false; BTP.char=c; return true; }).catch(function(){return false;}); }
   return Promise.resolve(false);
 }
 function btpWrite(bytes){
