@@ -500,9 +500,12 @@ function abrirProduto(id, editIdx){
   UI._pdId=id; modal(pdHTML(p));
 }
 function pdBase(p){ var vars=pdVars(p); return vars ? varPreco(vars[pdSel.varIdx]) : p.preco; }
-function pdAdicTotal(p){ var t=0; (p.grupos||[]).forEach(function(gr,gi){ var sel=pdSel.g[gi]||{}; gr.itens.forEach(function(it,ii){ t+=(sel[ii]||0)*it.preco; }); }); return t; }
+function pdAdicTotal(p){ var t=0; (p.grupos||[]).forEach(function(gr,gi){ var sel=pdSel.g[gi]||{}; gr.itens.forEach(function(it,ii){ if(adicEsgotado_(it.nome)) return; t+=(sel[ii]||0)*it.preco; }); }); return t; }
 function pdTotal(p){ return (pdBase(p)+pdAdicTotal(p))*pdSel.qty; }
 function grpSum(gi){ var sel=pdSel.g[gi]||{}, s=0; Object.keys(sel).forEach(function(k){ s+=sel[k]; }); return s; }
+// adicional indisponível = existe um produto (acompanhamento) com o mesmo nome marcado como ESGOTADO no cardápio
+function normAcomp_(s){ return foldAscii(String(s||'')).toLowerCase().trim(); }
+function adicEsgotado_(nome){ var n=normAcomp_(nome); return (S.produtos||[]).some(function(p){ return p.disp==='esgotado' && normAcomp_(p.nome)===n; }); }
 function pdHTML(p){
   var vars=pdVars(p), varSel = vars ? vars[pdSel.varIdx] : null;
   var h='<img class="pd-img" src="'+prodImg(p)+'" alt="">'+
@@ -533,6 +536,7 @@ function pdHTML(p){
     var sel=pdSel.g[gi]||{};
     h+='<div class="grp"><div class="grp-head"><strong>'+esc(gr.nome)+'</strong>'+(gr.max>0?'<span class="grp-max">escolha até '+gr.max+'</span>':'')+'</div>'+
       gr.itens.map(function(it,ii){ var q=sel[ii]||0;
+        if(adicEsgotado_(it.nome)) return '<div class="adrow" style="opacity:.5"><div class="adrow-b"><div class="ad-n">'+esc(it.nome)+' <span class="tag">esgotado</span></div><div class="ad-p">+ '+money(it.preco)+'</div></div><div class="pd-qtyctl"><span class="muted small2">indisponível</span></div></div>';
         return '<div class="adrow"><div class="adrow-b"><div class="ad-n">'+esc(it.nome)+'</div><div class="ad-p">+ '+money(it.preco)+'</div></div>'+
           '<div class="pd-qtyctl"><button class="qtybtn sm" data-action="pd-adic" data-g="'+gi+'" data-i="'+ii+'" data-d="-1" aria-label="Menos"'+(q<=0?' disabled':'')+'>'+ic('minus')+'</button><span>'+q+'</span><button class="qtybtn sm" data-action="pd-adic" data-g="'+gi+'" data-i="'+ii+'" data-d="1" aria-label="Mais">'+ic('plus')+'</button></div></div>';
       }).join('')+'</div>';
@@ -1436,6 +1440,7 @@ on('ver-img',function(d){
 });
 on('img-zoom',function(d,t){ if(t) t.classList.toggle('zoomed'); });
 on('pd-adic',function(d){ var g=+d.g, i=+d.i, dd=+d.d; var p=prod(UI._pdId); if(!p)return; var gr=(p.grupos||[])[g]; if(!gr)return;
+  var git=gr.itens[i]; if(dd>0 && git && adicEsgotado_(git.nome)){ toast(git.nome+' está esgotado hoje','err'); return; }
   pdSel.g[g]=pdSel.g[g]||{}; var cur=pdSel.g[g][i]||0;
   if(dd>0 && gr.max>0 && grpSum(g)>=gr.max){ toast('Você pode escolher até '+gr.max+' em '+gr.nome,'err'); return; }
   var nv=cur+dd; if(nv<0)nv=0; pdSel.g[g][i]=nv; patchPd(); });
@@ -1448,7 +1453,7 @@ on('pd-add',function(d){
   var vars=pdVars(p), varNome='', inclui=[], base=p.preco;
   if(vars){ if(pdSel.varIdx<0){ toast('Escolha uma opção','err'); return; } var v=vars[pdSel.varIdx]; varNome=v.nome; inclui=v.inclui||[]; base=varPreco(v); }
   var adics=[];
-  (p.grupos||[]).forEach(function(gr,gi){ var sel=pdSel.g[gi]||{}; gr.itens.forEach(function(it,ii){ var q=sel[ii]||0; if(q>0) adics.push({nome:it.nome,preco:it.preco,qty:q}); }); });
+  (p.grupos||[]).forEach(function(gr,gi){ var sel=pdSel.g[gi]||{}; gr.itens.forEach(function(it,ii){ var q=sel[ii]||0; if(q>0 && !adicEsgotado_(it.nome)) adics.push({nome:it.nome,preco:it.preco,qty:q}); }); });
   var unit=base+adics.reduce(function(a,x){return a+x.preco*x.qty;},0);
   var feijao=(vars&&vars[pdSel.varIdx]&&vars[pdSel.varIdx].feijao)?(ehNoite()?'Feijão tropeiro':(pdSel.feijao||FEIJOES[0])):null;
   var sabor=(p.sabores&&p.sabores.length)?(pdSel.sabor||p.sabores[0]):null;
