@@ -9,6 +9,7 @@ var MEKEY = 'dm_delivery_me';           // perfil do cliente (local, não sincro
 var APP_MODE = (typeof window!=='undefined' && window.DM_APP==='admin') ? 'admin' : 'cliente';
 var REVKEY = 'dm_delivery_rev';          // token de versão: muda a cada gravação, pra detectar mudança de outra aba/PWA
 var CARTKEY = 'dm_delivery_cart';        // carrinho do cliente (local, sobrevive ao recarregar)
+var ADMKEY = 'dm_delivery_adm';          // sessão do painel do dono (fica 24h no aparelho pra não deslogar toda hora)
 var lastRev = null;
 var bc = null; try{ if(typeof BroadcastChannel!=='undefined') bc = new BroadcastChannel('dm_delivery'); }catch(e){ bc=null; }
 /* ===== Sincronização na nuvem (Supabase) — cross-device (celular <-> computador) ===== */
@@ -1596,9 +1597,10 @@ on('adm-login',function(){
   var acc=S.equipe.filter(function(x){return x.user===u;})[0];
   if(!acc || p!=='2903'){ toast('Usuário ou senha inválidos','err'); return; }
   UI.adm.logged=true; UI.adm.user=acc; UI.adm.tab='visao'; UI.adm.order=null; UI.adm.mais=null;
-  audit('Entrou no painel',''); render();
+  salvarSessaoAdm_(acc);   // fica logado 24h neste aparelho (só a conta do dono)
+  audit('Entrou no painel',''); render(); pedirWakeLock_(); btpAutoReconnect_();
 });
-on('adm-logout',function(){ UI.adm.logged=false; UI.adm.user=null; UI.adm.order=null; UI.adm.mais=null; render(); });
+on('adm-logout',function(){ UI.adm.logged=false; UI.adm.user=null; UI.adm.order=null; UI.adm.mais=null; limparSessaoAdm_(); soltarWakeLock_(); render(); });
 on('adm-tab',function(d){ UI.adm.tab=d.t; UI.adm.order=null; UI.adm.mais=null; render(); scrollAdmTop(); });
 on('adm-kpi',function(d){ UI.adm.tab='pedidos'; UI.adm.filter=d.f; UI.adm.filterTipo='todos'; UI.adm.filterPay='todos'; UI.adm.order=null; UI.adm.mais=null; render(); });
 on('adm-filter',function(d){ UI.adm.filter=d.f; render(); });
@@ -1776,12 +1778,47 @@ function initUI(){
     curOrder:null, _pdId:null,
     adm:{logged:false,user:null,tab:'visao',filter:'todos',filterTipo:'todos',filterPay:'todos',order:null,mais:null,relPer:'tudo',cliQ:'',cliFilter:'todos',_pedit:null} };
 }
+/* ---- Sessão do painel do DONO: fica salva 24h no aparelho pra a Fábia não deslogar toda hora ---- */
+var ADM_SESSAO_MS = 24*60*60*1000;  // 24 horas (mude aqui se quiser menos)
+function salvarSessaoAdm_(acc){ try{ if(acc && acc.papel==='admin') localStorage.setItem(ADMKEY, JSON.stringify({user:acc.user, exp:Date.now()+ADM_SESSAO_MS})); }catch(e){} }
+function limparSessaoAdm_(){ try{ localStorage.removeItem(ADMKEY); }catch(e){} }
+function restaurarSessaoAdm_(){
+  if(APP_MODE!=='admin' || (UI.adm&&UI.adm.logged)) return;
+  var s=null; try{ s=JSON.parse(localStorage.getItem(ADMKEY)||'null'); }catch(e){}
+  if(!s || !s.user || !s.exp || Date.now()>s.exp){ if(s) limparSessaoAdm_(); return; }   // sem sessão ou expirou (24h) -> pede login
+  var acc=(S.equipe||[]).filter(function(x){return x.user===s.user && x.papel==='admin';})[0];  // só a conta do dono
+  if(!acc) return;
+  UI.adm.logged=true; UI.adm.user=acc; UI.adm.tab='visao';
+}
+/* ---- Wake Lock: mantém a TELA ligada com o painel aberto (dono) pra o Android não matar a aba/impressora ---- */
+var _wakeLock=null;
+function pedirWakeLock_(){
+  try{
+    if(APP_MODE!=='admin' || !(UI.adm&&UI.adm.logged)) return;
+    if(typeof navigator==='undefined' || !navigator.wakeLock || _wakeLock) return;
+    navigator.wakeLock.request('screen').then(function(wl){ _wakeLock=wl; try{ wl.addEventListener('release',function(){ _wakeLock=null; }); }catch(e){} }).catch(function(){});
+  }catch(e){}
+}
+function soltarWakeLock_(){ try{ if(_wakeLock){ _wakeLock.release(); _wakeLock=null; } }catch(e){} }
+/* ---- Reconexão automática da impressora quando o navegador já a autorizou antes (best-effort, sem janela) ---- */
+function btpAutoReconnect_(){
+  try{
+    if(APP_MODE!=='admin' || !btpSupported() || btpConectado() || !navigator.bluetooth.getDevices) return;
+    navigator.bluetooth.getDevices().then(function(devs){
+      if(!devs || !devs.length) return;
+      var dev=devs[0]; BTP.device=dev;
+      try{ dev.addEventListener('gattserverdisconnected',function(){ BTP.char=null; render(); }); }catch(e){}
+      return dev.gatt.connect().then(function(srv){ return acharCharImpressora_(srv); }).then(function(ch){ if(ch){ BTP.char=ch; render(); } });
+    }).catch(function(){});
+  }catch(e){}
+}
+function admOnReady_(){ if(APP_MODE!=='admin') return; pedirWakeLock_(); btpAutoReconnect_(); }
 function boot(){
   initUI(); seed();
   var restored=load();
   if(restored){ var maxN=100; S.pedidos.forEach(function(p){ var n=parseInt(String(p.id).replace('#',''),10); if(n>maxN)maxN=n; }); seedCounter=maxN; }
   try{ lastRev=localStorage.getItem(REVKEY); }catch(e){}
-  render();
+  restaurarSessaoAdm_(); render(); admOnReady_();
 }
 /* Sincronização entre abas E apps instalados (PWA): storage + BroadcastChannel + polling + foco/visibilidade.
    O polling (a cada 1.5s) garante o sync mesmo no PWA, onde o evento 'storage' não cruza a janela. */
@@ -1804,7 +1841,7 @@ function cloudPull(){
 }
 function cloudSubscribe(){ if(!sb) return; try{ sb.channel('estado-rt').on('postgres_changes',{event:'*',schema:'public',table:'estado'}, function(){ cloudPull(); }).subscribe(); }catch(e){} }
 function cloudBoot(){
-  initUI(); seed(); load(); render();   // pinta na hora com cache local; a nuvem sobrescreve em seguida
+  initUI(); seed(); load(); restaurarSessaoAdm_(); render(); admOnReady_();   // pinta na hora com cache local; a nuvem sobrescreve em seguida
   refreshCliente();   // puxa a conta/endereços do cliente logado (ou cria a linha se ainda não existir)
   sb.from('estado').select('data,rev').eq('id',1).single().then(function(r){
     if(r&&r.data&&r.data.data&&r.data.data.produtos){ if(aplicarNuvem(r.data)) render(); }
@@ -1816,8 +1853,8 @@ function cloudBoot(){
 
 if(CLOUD && !PREVIEW){
   cloudBoot();
-  window.addEventListener('focus', function(){ cloudPull(); refreshCliente(); });
-  if(typeof document!=='undefined') document.addEventListener('visibilitychange', function(){ if(!document.hidden){ cloudPull(); refreshCliente(); } });
+  window.addEventListener('focus', function(){ cloudPull(); refreshCliente(); admOnReady_(); });
+  if(typeof document!=='undefined') document.addEventListener('visibilitychange', function(){ if(!document.hidden){ cloudPull(); refreshCliente(); admOnReady_(); } });
 } else {
   if(bc){ bc.onmessage=function(ev){ if(ev&&ev.data&&ev.data!==lastRev){ lastRev=ev.data; if(reloadShared()) render(); } }; }
   window.addEventListener('storage', function(e){ if(e.key===LSKEY||e.key===REVKEY) syncCheck(); });
