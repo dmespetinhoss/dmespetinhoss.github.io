@@ -645,8 +645,6 @@ function cliPagamento(){
   h+=opts.map(function(o){ return '<div class="pay'+(c.pay===o[0]?' sel':'')+'" data-action="chk-pay" data-p="'+o[0]+'"><div class="pic">'+ic(o[1])+'</div><div><div class="pt">'+o[2]+'</div><div class="ps">'+o[3]+'</div></div></div>'; }).join('');
   if(c.pay==='pix'){
     var pix=pixAtual(), qimg=qrDataUrl(pix.code);
-    var nomeCli=(c.nome||UI.me.nome||'').trim();
-    var waMsg='Olá, não consegui anexar o comprovante no app referente ao meu pedido'+(nomeCli?' no nome de '+nomeCli:'')+'. Posso enviar por aqui?';
     h+='<div class="pixbox">'+
       '<div class="pix-cap">Pague <strong>'+money(pix.valor)+'</strong> com Pix</div>'+
       (qimg?'<img class="pix-qr" src="'+qimg+'" alt="QR Code Pix">':'<div class="notice info left" style="margin:0 0 10px">'+ic('info')+'<div>Use o código Pix abaixo (copia e cola).</div></div>')+
@@ -655,8 +653,8 @@ function cliPagamento(){
       '<textarea class="pix-code" readonly onclick="this.select()" aria-label="Código Pix copia e cola">'+esc(pix.code)+'</textarea>'+
       '<div class="upload-wrap"><label class="up-lb">Comprovante do Pix</label>'+
       '<div class="upload'+(c.comprov?' has':'')+'" data-action="chk-upload">'+(c.comprov?ic('check')+' Comprovante anexado<img src="'+c.comprov+'">':ic('attach')+' Toque para anexar o comprovante')+'</div>'+
-      '<a class="btn btn-outline btn-sm btn-block" style="text-decoration:none;margin-top:8px" href="'+waLink(S.loja.whats,waMsg)+'" target="_blank" rel="noopener">'+ic('chat')+' Enviar comprovante no WhatsApp</a></div>'+
-      '<div class="notice warn left">'+ic('warn')+'<div>O pedido só vai pra cozinha depois que o restaurante <strong>confirmar o Pix</strong>. Anexar o comprovante não aprova sozinho.</div></div></div>';
+      '<button class="btn btn-outline btn-sm btn-block" style="margin-top:8px" data-action="chk-pix-whats">'+ic('chat')+' Não consegui anexar - enviar no WhatsApp</button></div>'+
+      '<div class="notice info left">'+ic('info')+'<div><strong>Não consegue anexar?</strong> Toque em <strong>"Não consegui anexar - enviar no WhatsApp"</strong>: o pedido é <strong>enviado do mesmo jeito</strong> e você manda o comprovante por lá. O restaurante confere pelo seu nome e confirma. Quem consegue anexar, é só anexar acima e tocar em "Enviar pedido para validação".</div></div></div>';
   } else if(c.pay==='dinheiro'){
     h+='<div class="card"><div class="field"><label>Precisa de troco? Para quanto? (opcional)</label><input inputmode="numeric" data-oninput="chk-f" data-k="troco" value="'+esc(c.troco)+'" placeholder="Ex.: 50"></div></div>';
   } else if(c.pay==='cartao'){
@@ -982,7 +980,7 @@ function admDetalhe(o){
      (o.desconto>0?'<div class="dp-line"><span>Desconto'+(o.cupom?' ('+esc(o.cupom)+')':'')+'</span><span>- '+money(o.desconto)+'</span></div>':'')+
      (o.tipo==='delivery'?'<div class="dp-line"><span>Taxa de entrega</span><span>'+money(o.taxa)+'</span></div>':'')+
      '<div class="dp-line big"><strong>Total</strong><strong class="gold">'+money(o.total)+'</strong></div>'+
-     (o.pay.comprovante?'<div class="comprov-wrap"><div class="up-lb">Comprovante enviado:</div><img class="comprov" src="'+o.pay.comprovante+'" data-action="ver-img" data-src="'+o.pay.comprovante+'"><div class="comprov-hint">'+ic('search')+' Toque para ampliar</div></div>':'')+'</div>';
+     (o.pay.comprovante?'<div class="comprov-wrap"><div class="up-lb">Comprovante enviado:</div><img class="comprov" src="'+o.pay.comprovante+'" data-action="ver-img" data-src="'+o.pay.comprovante+'"><div class="comprov-hint">'+ic('search')+' Toque para ampliar</div></div>':(o.pay.viaWhats?'<div class="notice info" style="margin-top:10px">'+ic('chat')+'<div><strong>Comprovante pelo WhatsApp.</strong> O cliente não conseguiu anexar no app e vai mandar o comprovante no WhatsApp do restaurante. Confira lá pelo nome (<strong>'+esc(o.nome)+'</strong>) e confirme o Pix.</div></div>':''))+'</div>';
   h+='<div class="actionbar">'+admAcoes(o)+'</div>';
   h+='<div class="dp-block"><h4>Histórico</h4>'+(o.historico||[]).map(function(x){
     return '<div class="dp-line"><span>'+esc(x.t)+' · '+esc(x.who)+'</span><span>'+esc(x.act)+'</span></div>';
@@ -1518,6 +1516,21 @@ on('chk-finalizar',function(){
   if(c.modo==='delivery' && c.bairro!=='__outro'){ var b=bairro(c.bairro); if(b&&b.min>0&&cartSubtotal()<b.min){ toast('Pedido mínimo de '+money(b.min)+' para '+c.bairro,'err'); return; } }
   criarPedido();
 });
+// Pix sem conseguir anexar: cria o pedido do mesmo jeito (cai no painel "em validação") e abre o WhatsApp pra mandar o comprovante
+on('chk-pix-whats',function(){
+  var c=UI.chk;
+  if(c.pay!=='pix'){ toast('Escolha o Pix','err'); return; }
+  if(!lojaAberta()){ toast('Infelizmente estamos fechado no momento','err'); return; }
+  var av=revalidarCarrinho();
+  if(av.length){ toast(av[0]+'. Confira a sacola.','err'); UI.cli.screen='carrinho'; render(); return; }
+  if(c.modo==='delivery' && c.bairro!=='__outro'){ var b=bairro(c.bairro); if(b&&b.min>0&&cartSubtotal()<b.min){ toast('Pedido mínimo de '+money(b.min)+' para '+c.bairro,'err'); return; } }
+  var wa=S.loja.whats, nomeCli=(c.nome||UI.me.nome||'').trim();
+  c.comprov=null; c.viaWhats=true;
+  var o=criarPedido();   // status em_validacao, comprovante pelo WhatsApp
+  var msg='Olá! Fiz o pedido '+(o?o.id:'')+' pelo app'+(nomeCli?' no nome de '+nomeCli:'')+' e vou enviar o comprovante do Pix por aqui.';
+  try{ window.open(waLink(wa,msg),'_blank','noopener'); }catch(e){ try{ location.href=waLink(wa,msg); }catch(e2){} }
+  toast('Pedido enviado! Mande o comprovante no WhatsApp.','ok');
+});
 function criarPedido(){
   var c=UI.chk, sub=cartSubtotal(), taxa=c.modo==='delivery'?(S.loja.taxaEntrega||0):0, desc=descontoValor(sub);
   var payMap={pix:'Pix com comprovante',dinheiro:'Dinheiro no local',cartao:'Cartão no local'};
@@ -1526,7 +1539,7 @@ function criarPedido(){
   var ped={ id:'#'+(++seedCounter), tel:c.whats, nome:c.nome, tipo:c.modo,
     bairro:c.modo==='delivery'?c.bairro:'', end:endComp, comp:c.comp||'', ref:c.ref||'', entregaSobConsulta:false,
     itens:JSON.parse(JSON.stringify(UI.cart)), subtotal:sub, taxa:taxa, desconto:desc, cupom:(UI.cupom?UI.cupom.code:''), total:sub-desc+taxa, obs:c.obs||'',
-    pay:{ metodo:c.pay, label:payMap[c.pay], status:c.pay==='pix'?'enviado':'pendente', comprovante:c.comprov||null, troco:c.troco||'' },
+    pay:{ metodo:c.pay, label:payMap[c.pay], status:c.pay==='pix'?'enviado':'pendente', comprovante:c.comprov||null, viaWhats:!!c.viaWhats, troco:c.troco||'' },
     status:status, criadoEm:nowHM(), dia:hoje(), ts:Date.now(),
     historico:[{t:nowHM(),who:'Cliente',act:'Pedido criado'}], reimpressoes:0 };
   S.pedidos.unshift(ped);
@@ -1537,6 +1550,7 @@ function criarPedido(){
   UI.curOrder=ped.id; UI.cart=[]; UI.cupom=null;
   UI.chk={modo:null,bairro:'',rua:'',numero:'',comp:'',ref:'',nome:c.nome,whats:c.whats,pay:null,troco:'',comprov:null,obs:''};
   UI.cli.screen='confirmado'; save(); render();
+  return ped;
 }
 on('cli-track',function(d){ UI.curOrder=d.id; UI.cli.screen='track'; render(); });
 on('cli-repetir',function(d){
