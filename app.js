@@ -892,6 +892,17 @@ function admVisao(){
     h+='<div class="adm-sec-t">Hoje</div><div class="kpi-grid">'+
       kpiPlain(money(fatHoje),'Faturamento','tag',true)+kpiPlain(conclHoje,'Concluídos','checkc')+
       kpiPlain(S.clientes.length,'Clientes na base','users')+kpiPlain('+'+novosCli,'Novos hoje','star')+'</div>';
+    var cx=caixaDoDia(hoje());
+    function cxr(lb,v,n){ return '<div class="dp-line"><span>'+lb+' <span class="muted">('+n+')</span></span><strong>'+money(v)+'</strong></div>'; }
+    h+='<div class="adm-sec-t">Caixa de hoje</div><div class="card">'+
+      cxr('Dinheiro',cx.val.dinheiro,cx.qtd.dinheiro)+
+      cxr('PIX',cx.val.pix,cx.qtd.pix)+
+      cxr('Cartão Débito',cx.val.debito,cx.qtd.debito)+
+      cxr('Cartão Crédito',cx.val.credito,cx.qtd.credito)+
+      (cx.qtd.cartao?cxr('Cartão (sem tipo)',cx.val.cartao,cx.qtd.cartao):'')+
+      '<div class="dp-line" style="border-top:1px solid var(--line);margin-top:4px;padding-top:8px"><span>Almoço / Janta</span><strong>'+money(cx.almT)+' / '+money(cx.janT)+'</strong></div>'+
+      '<div class="dp-line big"><strong>Total do dia</strong><strong class="gold">'+money(cx.tot)+'</strong></div>'+
+      '<button class="btn btn-primary btn-block" style="margin-top:10px" data-action="adm-fechamento">'+ic('printer')+' Imprimir fechamento</button></div>';
   }
   var esgotados=S.produtos.filter(function(p){return p.disp==='esgotado';}).length;
   if(esgotados) h+='<div class="notice info" style="margin-top:16px">'+ic('info')+'<div>'+esgotados+' produto(s) marcados como esgotados hoje.</div></div>';
@@ -960,6 +971,7 @@ function admDetalhe(o){
   if(!o) return admPedidos();
   var h='<div class="backbar"><button class="backbtn" data-action="adm-back">'+ic('back')+' Voltar aos pedidos</button></div>';
   h+='<div class="pagehead"><h2>Pedido '+esc(o.id)+' '+statusBadge(o)+'</h2><p>'+esc(o.dia)+' · '+esc(o.criadoEm)+'</p></div>';
+  if(isAdmin()) h+='<div style="text-align:right;margin:-6px 0 10px"><button class="btn btn-primary btn-sm" data-action="adm-editar" data-id="'+esc(o.id)+'">'+ic('edit')+' Editar pedido</button></div>';
   h+='<div class="det-cols">';
   h+='<div class="det-col"><div class="dp-block"><h4>Cliente</h4>'+
      '<div class="dp-line"><span>Nome</span><strong>'+esc(o.nome)+'</strong></div>'+
@@ -1234,6 +1246,87 @@ function imprimirCupom(o,reimp){
 }
 on('adm-bt-connect',function(){ btpConnect(); });
 on('adm-bt-disconnect',function(){ btpDisconnect(); });
+
+/* ===== CAIXA: forma de pagamento + período + impressão do fechamento ===== */
+function metodoCaixa(o){ var p=(o&&o.pay)||{}; if(p.metodo==='pix')return 'pix'; if(p.metodo==='dinheiro')return 'dinheiro'; if(p.metodo==='cartao')return p.cartaoTipo==='debito'?'debito':(p.cartaoTipo==='credito'?'credito':'cartao'); return 'dinheiro'; }
+function periodoPedido(o){ var h=parseInt(String((o&&o.criadoEm)||'0').split(':')[0],10)||0; return h<16?'almoco':'janta'; }
+function caixaDoDia(dia){
+  dia=dia||hoje();
+  var concl=(S.pedidos||[]).filter(function(p){return p.status==='concluido'&&p.dia===dia;});
+  var val={pix:0,debito:0,credito:0,dinheiro:0,cartao:0}, qtd={pix:0,debito:0,credito:0,dinheiro:0,cartao:0};
+  var almT=0,janT=0,almN=0,janN=0,tot=0;
+  concl.forEach(function(p){ var k=metodoCaixa(p); val[k]+=p.total; qtd[k]++; tot+=p.total; if(periodoPedido(p)==='almoco'){almT+=p.total;almN++;}else{janT+=p.total;janN++;} });
+  return {dia:dia,val:val,qtd:qtd,almT:almT,janT:janT,almN:almN,janN:janN,tot:tot,n:concl.length};
+}
+/* impressão genérica por linhas (reaproveita o mesmo caminho: BT Android / iPhone MPU / compartilhar / sistema) */
+function escposFromRows(rows){
+  var B=[];
+  function raw(){ for(var i=0;i<arguments.length;i++) B.push(arguments[i]&0xFF); }
+  function txt(s){ s=foldAscii(s); for(var i=0;i<s.length;i++) B.push(s.charCodeAt(i)&0xFF); }
+  raw(0x1B,0x40);
+  rows.forEach(function(r){ raw(0x1B,0x61, r.align==='center'?1:0); raw(0x1B,0x45, r.bold?1:0); raw(0x1D,0x21, r.size>=26?0x11:0x00); txt(r.t); B.push(0x0A); });
+  raw(0x1D,0x21,0x00); raw(0x1B,0x45,0); raw(0x1B,0x61,0); B.push(0x0A); B.push(0x0A); B.push(0x0A); B.push(0x0A);
+  return new Uint8Array(B);
+}
+function canvasFromRows(rows){
+  var W=384, PAD=6; function lh(sz){ return Math.round(sz*1.32); }
+  var H=PAD*2; rows.forEach(function(r){ H+=lh(r.size); });
+  var cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  var g=cv.getContext('2d'); g.fillStyle='#fff'; g.fillRect(0,0,W,H); g.fillStyle='#000'; g.textBaseline='top';
+  var y=PAD; rows.forEach(function(r){ g.font=(r.bold?'bold ':'')+r.size+'px Menlo, "Courier New", monospace'; var tx=PAD; if(r.align==='center'){ var tw=g.measureText(r.t).width; tx=Math.max(PAD,(W-tw)/2); } g.fillText(r.t,tx,y); y+=lh(r.size); });
+  return cv;
+}
+function htmlThermalFromRows(rows){
+  var h='<div style="width:384px;max-width:100%;padding:6px;font-family:\'Courier New\',monospace;color:#000;background:#fff">';
+  rows.forEach(function(r){ h+='<div style="font-size:'+r.size+'px;line-height:1.3;white-space:pre;'+(r.bold?'font-weight:bold;':'')+(r.align==='center'?'text-align:center;':'')+'">'+esc(r.t)+'</div>'; });
+  return h+'</div>';
+}
+function mpuRows_(rows){ try{ var b64=btoa(unescape(encodeURIComponent(htmlThermalFromRows(rows)))); window.location.href='com.samathosoft.webprint://#deb64#'+b64; return true; }catch(e){ return false; } }
+function shareRows_(rows,nome){ try{ var f=dataURLtoFile(canvasFromRows(rows).toDataURL('image/png'),(nome||'doc')+'.png'); if(navigator.canShare&&navigator.canShare({files:[f]})){ navigator.share({files:[f]}).then(function(){toast('Escolha o app da impressora','info');},function(){}); return true; } }catch(e){} return false; }
+function fechamentoRows(dia){
+  var cx=caixaDoDia(dia), Sz=19, rows=[];
+  function row(t,size,bold,align){ rows.push({t:t,size:size||Sz,bold:!!bold,align:align||'left'}); }
+  function sep(){ row('--------------------------------',Sz); }
+  row('DM ESPETINHO',30,true,'center');
+  row('FECHAMENTO DE CAIXA',20,true,'center');
+  row(cx.dia,Sz,false,'center');
+  row('Emitido as '+nowHM(),14,false,'center');
+  sep();
+  row(ln2('FORMA','VALOR'),Sz,true);
+  row(ln2('Dinheiro ('+cx.qtd.dinheiro+')', money(cx.val.dinheiro)),Sz);
+  row(ln2('PIX ('+cx.qtd.pix+')', money(cx.val.pix)),Sz);
+  row(ln2('Cartao Debito ('+cx.qtd.debito+')', money(cx.val.debito)),Sz);
+  row(ln2('Cartao Credito ('+cx.qtd.credito+')', money(cx.val.credito)),Sz);
+  if(cx.qtd.cartao) row(ln2('Cartao s/ tipo ('+cx.qtd.cartao+')', money(cx.val.cartao)),Sz);
+  sep();
+  row(ln2('Almoco ('+cx.almN+')', money(cx.almT)),Sz);
+  row(ln2('Janta ('+cx.janN+')', money(cx.janT)),Sz);
+  sep();
+  row(ln2('TOTAL ('+cx.n+' pedidos)', money(cx.tot)),24,true);
+  sep();
+  row('Conferido por:',Sz); row('',Sz); row('____________________________',Sz);
+  return rows;
+}
+function imprimirFechamento(dia){
+  var rows=fechamentoRows(dia);
+  if(btpConectado()){ return btpWrite(escposFromRows(rows)).then(function(){ toast('Fechamento enviado a impressora','ok'); }, function(){ abrirFechamento_(rows); }); }
+  if(btpSupported() && BTP.device){ return btpReconnect().then(function(ok){ if(ok){ return btpWrite(escposFromRows(rows)).then(function(){ toast('Fechamento enviado a impressora','ok'); }); } if(isIOS()&&mpuRows_(rows)) return; if(isTouchShare()&&shareRows_(rows,'fechamento')) return; abrirFechamento_(rows); }); }
+  if(isIOS() && mpuRows_(rows)) return;
+  if(isTouchShare() && shareRows_(rows,'fechamento')) return;
+  abrirFechamento_(rows);
+}
+function abrirFechamento_(rows){
+  var html=htmlThermalFromRows(rows); var pa=$('print-area'); if(pa) pa.innerHTML=html; UI._docRows=rows;
+  var btns='';
+  if(isIOS()) btns+='<button class="btn btn-primary btn-block" data-action="do-doc-mpu">'+ic('printer')+' Imprimir (Mobile Print Util)</button>';
+  if(isTouchShare()) btns+='<button class="btn btn-outline btn-block" style="margin-top:8px" data-action="do-doc-share">'+ic('printer')+' Compartilhar imagem</button>';
+  btns+='<button class="btn '+(isIOS()?'btn-ghost':'btn-primary')+' btn-block" style="margin-top:8px" data-action="do-print">'+ic('printer')+' Impressão do sistema</button><button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="close-modal">Fechar</button>';
+  modal('<h2 class="center">Fechamento de caixa</h2>'+html+'<div class="sticky-cta">'+btns+'</div>',true);
+  if(!isTouchShare()) setTimeout(function(){ try{ window.print(); }catch(e){} },400);
+}
+on('do-doc-mpu',function(){ if(UI._docRows) mpuRows_(UI._docRows); });
+on('do-doc-share',function(){ if(UI._docRows) shareRows_(UI._docRows,'fechamento'); });
+on('adm-fechamento',function(){ imprimirFechamento(hoje()); });
 
 /* Cardápio (admin) */
 function admCardapio(){
@@ -1634,7 +1727,56 @@ on('adm-aceitar',function(d){ var o=order(d.id); if(!guard(o,['aguardando_aceite
 on('adm-reimprimir',function(d){ var o=order(d.id); if(!o)return; o.reimpressoes=(o.reimpressoes||0)+1; addHist(o,'Reimprimiu (via '+(o.reimpressoes+1)+')'); save(); imprimirCupom(o,true); });
 on('adm-pronto',function(d){ var o=order(d.id); if(!guard(o,['em_preparo']))return; o.status='pronto'; addHist(o,'Marcou como pronto'); save(); toast('Pedido pronto','ok'); render(); });
 on('adm-saiu',function(d){ var o=order(d.id); if(!guard(o,['pronto']))return; if(o.tipo!=='delivery'){ toast('Retirada não sai para entrega','err'); return; } o.status='saiu'; addHist(o,'Saiu para entrega'); save(); toast('Saiu para entrega','ok'); render(); });
-on('adm-concluir',function(d){ var o=order(d.id); if(!guard(o,['pronto','saiu']))return; o.status='concluido'; if(o.pay.metodo!=='pix')o.pay.status='recebido'; addHist(o,'Concluiu o pedido'); audit('Concluiu '+o.id,o.id); save(); toast('Pedido concluído','ok'); render(); });
+on('adm-concluir',function(d){ var o=order(d.id); if(!guard(o,['pronto','saiu']))return;
+  if(o.pay.metodo==='cartao' && !o.pay.cartaoTipo){ pedirCartaoTipo_(o,function(){ concluir_(o); }); return; }
+  concluir_(o);
+});
+function concluir_(o){ o.status='concluido'; if(o.pay.metodo!=='pix')o.pay.status='recebido'; addHist(o,'Concluiu o pedido'); audit('Concluiu '+o.id,o.id); save(); toast('Pedido concluído','ok'); render(); }
+function pedirCartaoTipo_(o,cb){
+  UI._cartaoCb=cb;
+  modal('<h2 class="center">Cartão: Débito ou Crédito?</h2><p style="color:var(--text2);text-align:center;margin-top:0">Só pra separar certinho no caixa.</p>'+
+    '<div class="sticky-cta"><button class="btn btn-primary btn-block btn-lg" data-action="adm-cartao-tipo" data-id="'+esc(o.id)+'" data-t="debito">'+ic('card')+' Débito</button>'+
+    '<button class="btn btn-primary btn-block btn-lg" style="margin-top:8px" data-action="adm-cartao-tipo" data-id="'+esc(o.id)+'" data-t="credito">'+ic('card')+' Crédito</button></div>',true);
+}
+on('adm-cartao-tipo',function(d){ var o=order(d.id); if(o){ o.pay.cartaoTipo=(d.t==='credito')?'credito':'debito'; } closeModal(); var cb=UI._cartaoCb; UI._cartaoCb=null; if(cb) cb(); });
+
+/* ===== EDITAR PEDIDO (dono): tipo entrega/retirada + itens + forma de pagamento -> recalcula (o caixa soma certo) ===== */
+function edicaoCalc_(e){ var sub=(e.itens||[]).reduce(function(a,i){return a+i.preco*i.qty;},0); var taxa=e.tipo==='delivery'?(S.loja.taxaEntrega||0):0; var desc=Math.min(e.desconto||0,sub); return {sub:sub,taxa:taxa,desc:desc,total:Math.max(0,sub-desc+taxa)}; }
+function edicaoHTML(){
+  var e=UI.adm._edit; if(!e) return '';
+  var cc=edicaoCalc_(e);
+  var h='<h2>Editar pedido '+esc(e.id)+'</h2>';
+  h+='<div class="grp"><div class="grp-head"><strong>Tipo</strong></div><div class="row2">'+
+     '<button class="btn '+(e.tipo==='delivery'?'btn-primary':'btn-ghost')+'" data-action="ed-tipo" data-t="delivery">'+ic('delivery')+' Entrega</button>'+
+     '<button class="btn '+(e.tipo!=='delivery'?'btn-primary':'btn-ghost')+'" data-action="ed-tipo" data-t="retirada">Retirada</button></div></div>';
+  h+='<div class="grp"><div class="grp-head"><strong>Itens</strong></div>'+((e.itens&&e.itens.length)?e.itens.map(function(i,ix){
+    return '<div class="adrow"><div class="adrow-b"><div class="ad-n">'+esc(i.nome)+(i.varNome?' · '+esc(i.varNome):'')+'</div><div class="ad-p">'+money(i.preco*i.qty)+'</div></div>'+
+      '<div class="pd-qtyctl"><button class="qtybtn sm" data-action="ed-qty" data-i="'+ix+'" data-d="-1" aria-label="Menos">'+ic('minus')+'</button><span>'+i.qty+'</span><button class="qtybtn sm" data-action="ed-qty" data-i="'+ix+'" data-d="1" aria-label="Mais">'+ic('plus')+'</button><button class="qtybtn sm" data-action="ed-rm" data-i="'+ix+'" aria-label="Remover">'+ic('trash')+'</button></div></div>';
+  }).join('') : '<div class="muted small2">Sem itens.</div>')+'</div>';
+  var pm=e.pay.metodo, ct=e.pay.cartaoTipo||'';
+  function pb(k,lb){ var on=(k==='debito'||k==='credito')?(pm==='cartao'&&ct===k):(pm===k&&k!=='cartao'); return '<button class="btn btn-sm '+(on?'btn-primary':'btn-ghost')+'" data-action="ed-pay" data-m="'+k+'">'+lb+'</button>'; }
+  h+='<div class="grp"><div class="grp-head"><strong>Pagamento</strong></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+pb('pix','PIX')+pb('dinheiro','Dinheiro')+pb('debito','Cartão Débito')+pb('credito','Cartão Crédito')+'</div></div>';
+  h+='<div class="card"><div class="dp-line"><span>Subtotal</span><span>'+money(cc.sub)+'</span></div>'+
+     (cc.desc>0?'<div class="dp-line"><span>Desconto</span><span>- '+money(cc.desc)+'</span></div>':'')+
+     '<div class="dp-line"><span>Taxa de entrega</span><span>'+money(cc.taxa)+'</span></div>'+
+     '<div class="dp-line big"><strong>Total</strong><strong class="gold">'+money(cc.total)+'</strong></div></div>';
+  h+='<div class="sticky-cta"><button class="btn btn-primary btn-block btn-lg" data-action="ed-salvar">Salvar alterações</button><button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="close-modal">Cancelar</button></div>';
+  return h;
+}
+function patchEdit_(){ var m=document.querySelector('#modal-root .modal'); if(!m)return; m.innerHTML='<div class="modal-grip"></div><button class="modal-x" data-action="close-modal" aria-label="Fechar">'+ic('x')+'</button>'+edicaoHTML(); }
+on('adm-editar',function(d){ if(!isAdmin()){ toast('Só o dono edita o pedido','err'); return; } var o=order(d.id); if(!o)return; UI.adm._edit=JSON.parse(JSON.stringify(o)); if(!UI.adm._edit.pay)UI.adm._edit.pay={metodo:'dinheiro',label:'Dinheiro no local'}; modal(edicaoHTML()); });
+on('ed-tipo',function(d){ if(!UI.adm._edit)return; UI.adm._edit.tipo=(d.t==='delivery')?'delivery':'retirada'; patchEdit_(); });
+on('ed-qty',function(d){ var e=UI.adm._edit; if(!e)return; var i=e.itens[+d.i]; if(!i)return; i.qty=Math.max(1,(i.qty||1)+(+d.d)); patchEdit_(); });
+on('ed-rm',function(d){ var e=UI.adm._edit; if(!e)return; e.itens.splice(+d.i,1); patchEdit_(); });
+on('ed-pay',function(d){ var e=UI.adm._edit; if(!e)return; var m=d.m; if(m==='debito'||m==='credito'){ e.pay.metodo='cartao'; e.pay.cartaoTipo=m; } else { e.pay.metodo=m; e.pay.cartaoTipo=''; } patchEdit_(); });
+on('ed-salvar',function(){
+  var e=UI.adm._edit; if(!e)return; var o=order(e.id); if(!o){ closeModal(); return; }
+  var cc=edicaoCalc_(e);
+  var payMap={pix:'Pix com comprovante',dinheiro:'Dinheiro no local',cartao:'Cartão no local'};
+  o.itens=e.itens; o.tipo=e.tipo; o.subtotal=cc.sub; o.taxa=cc.taxa; o.desconto=cc.desc; o.total=cc.total;
+  o.pay.metodo=e.pay.metodo; o.pay.cartaoTipo=e.pay.cartaoTipo||''; o.pay.label=payMap[e.pay.metodo]||o.pay.label;
+  addHist(o,'Dono editou o pedido (total '+money(cc.total)+')'); audit('Editou pedido '+o.id,o.id); save(); closeModal(); toast('Pedido atualizado','ok'); render();
+});
 on('adm-cancelar-admin',function(d){ if(!needAdmin())return; var o=order(d.id); if(!guard(o,['em_preparo','pronto']))return; pedirMotivo('Cancelar pedido (dono)',['Cliente desistiu','Sem insumo','Erro no pedido','Fora de área'],function(m){ o.status='cancelado'; o.pay.motivoRecusa=m; addHist(o,'Dono cancelou: '+m); audit('Cancelou '+o.id,o.id); save(); toast('Pedido cancelado','info'); render(); }); });
 function pedirMotivo(titulo,ops,cb){
   modal('<h2>'+esc(titulo)+'</h2><p style="color:var(--text2)">Escolha ou escreva o motivo (vai para o cliente).</p>'+
