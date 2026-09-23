@@ -818,7 +818,7 @@ function modAllowed(m){ return isAdmin() || ATENDENTE_MODS.indexOf(m)>=0; }
 /* Alerta flutuante fixo: pedidos esperando ação (validação/aceite). Some quando não há pendências. */
 function admAlerta(){
   if(!UI.adm.logged) return '';
-  var pend=S.pedidos.filter(function(p){return ['em_validacao','aguardando_aceite'].indexOf(p.status)>=0;}).length;
+  var pend=S.pedidos.filter(function(p){return ['em_validacao','aguardando_aceite'].indexOf(p.status)>=0 && p.dia===hoje();}).length;
   if(!pend) return '';
   // não mostra quando já está na própria lista de pedidos
   if(!UI.adm.order && !UI.adm.mais && UI.adm.tab==='pedidos') return '';
@@ -848,7 +848,7 @@ function admLogin(){
     '<button class="btn btn-primary btn-block btn-lg" data-action="adm-login">Entrar</button></div></div>';
 }
 function admTop(){
-  var pend=S.pedidos.filter(function(p){return ['em_validacao','aguardando_aceite'].indexOf(p.status)>=0;}).length;
+  var pend=S.pedidos.filter(function(p){return ['em_validacao','aguardando_aceite'].indexOf(p.status)>=0 && p.dia===hoje();}).length;
   return '<div class="topbar"><img class="logo" src="assets/logo-dm.jpg" alt="">'+
     '<div class="tb-id"><div class="tb-tt">DM Espetinho</div><div class="tb-sub">'+esc(UI.adm.user.nome)+' · '+(isAdmin()?'Dono':'Atendente')+'</div></div>'+
     '<div class="tb-right"><button class="iconbtn" data-action="adm-tab" data-t="pedidos" aria-label="Pedidos pendentes">'+ic('bell')+(pend?'<span class="badge">'+pend+'</span>':'')+'</button>'+
@@ -862,7 +862,7 @@ function admSidebar(){
   }).join('')+'</div>';
 }
 function admTabs(){
-  var pend=S.pedidos.filter(function(p){return ['em_validacao','aguardando_aceite'].indexOf(p.status)>=0;}).length;
+  var pend=S.pedidos.filter(function(p){return ['em_validacao','aguardando_aceite'].indexOf(p.status)>=0 && p.dia===hoje();}).length;
   function t(k,icn,lb){ var on=(!UI.adm.order&&!UI.adm.mais&&UI.adm.tab===k);
     var b=(k==='pedidos'&&pend)?'<span class="tbadge">'+pend+'</span>':'';
     return '<button class="tab'+(on?' on':'')+'" data-action="adm-tab" data-t="'+k+'" aria-label="'+lb+'"><span class="ti">'+ic(icn)+'</span>'+lb+b+'</button>'; }
@@ -872,7 +872,7 @@ function admTabs(){
 /* Visão geral */
 function admVisao(){
   var P=S.pedidos;
-  function c(fn){ return P.filter(fn).length; }
+  function c(fn){ return P.filter(function(p){return p.dia===hoje()&&fn(p);}).length; }   // KPIs do topo = só de hoje (não mistura dia anterior)
   var novos=c(function(p){return p.status==='aguardando_aceite';});
   var valid=c(function(p){return p.status==='em_validacao';});
   var preparo=c(function(p){return p.status==='em_preparo';});
@@ -914,22 +914,28 @@ function kpiPlain(n,label,icn,hl){ return '<div class="kpi'+(hl?' hl':'')+'"><sp
 /* Pedidos */
 var FILTERS=[['todos','Todos'],['aguardando_aceite','Novos'],['em_validacao','Validação'],['em_preparo','Preparo'],['pronto','Prontos'],['saiu','Entrega'],['concluido','Concluídos'],['recusado','Recusados']];
 function admPedidos(){
-  var f=UI.adm.filter||'todos', ft=UI.adm.filterTipo||'todos', fp=UI.adm.filterPay||'todos';
-  var list=S.pedidos.filter(function(p){
+  var f=UI.adm.filter||'todos', ft=UI.adm.filterTipo||'todos', fp=UI.adm.filterPay||'todos', fd=UI.adm.filterDia||'hoje';
+  function diaOk(p){ return fd==='hoje'?p.dia===hoje():(fd==='anteriores'?p.dia!==hoje():true); }
+  var base=S.pedidos.filter(diaOk);
+  var list=base.filter(function(p){
     if(f!=='todos'&&p.status!==f) return false;
     if(ft!=='todos'&&p.tipo!==ft) return false;
     if(fp!=='todos'&&p.pay.metodo!==fp) return false;
     return true;
   });
-  var h='<div class="pagehead"><h2>Pedidos</h2><p>'+list.length+' pedido(s)</p></div>';
+  var h='<div class="pagehead"><h2>Pedidos</h2><p>'+list.length+' pedido(s)'+(fd==='hoje'?' · hoje':(fd==='anteriores'?' · dias anteriores':' · todos os dias'))+'</p></div>';
+  h+='<div class="filters">'+[['hoje','Hoje'],['anteriores','Anteriores'],['todos','Todos os dias']].map(function(x){
+    var n=S.pedidos.filter(function(p){ return x[0]==='hoje'?p.dia===hoje():(x[0]==='anteriores'?p.dia!==hoje():true); }).length;
+    return '<button class="chip'+(fd===x[0]?' on':'')+'" data-action="adm-filter-dia" data-f="'+x[0]+'">'+x[1]+' ('+n+')</button>';
+  }).join('')+'</div>';
   h+='<div class="filters">'+FILTERS.map(function(x){
-    var n=x[0]==='todos'?S.pedidos.length:S.pedidos.filter(function(p){return p.status===x[0];}).length;
+    var n=x[0]==='todos'?base.length:base.filter(function(p){return p.status===x[0];}).length;
     return '<button class="chip'+(f===x[0]?' on':'')+'" data-action="adm-filter" data-f="'+x[0]+'">'+x[1]+' ('+n+')</button>';
   }).join('')+'</div>';
   h+='<div class="filters">'+
     [['todos','Tipo: todos'],['delivery','Entrega'],['retirada','Retirada']].map(function(x){return '<button class="chip'+(ft===x[0]?' on':'')+'" data-action="adm-filter-tipo" data-f="'+x[0]+'">'+x[1]+'</button>';}).join('')+
     [['todos','Pgto: todos'],['pix','Pix'],['dinheiro','Dinheiro'],['cartao','Cartão']].map(function(x){return '<button class="chip'+(fp===x[0]?' on':'')+'" data-action="adm-filter-pay" data-f="'+x[0]+'">'+x[1]+'</button>';}).join('')+'</div>';
-  if(!list.length) h+='<div class="empty">'+ic('receipt','big')+'Nenhum pedido neste filtro.</div>';
+  if(!list.length) h+='<div class="empty">'+ic('receipt','big')+(fd==='hoje'?'Nenhum pedido hoje ainda.':'Nenhum pedido neste filtro.')+'</div>';
   else h+='<div class="ord-grid">'+list.map(admOrderItem).join('')+'</div>';
   return h;
 }
@@ -1709,8 +1715,9 @@ on('adm-login',function(){
 });
 on('adm-logout',function(){ UI.adm.logged=false; UI.adm.user=null; UI.adm.order=null; UI.adm.mais=null; limparSessaoAdm_(); soltarWakeLock_(); render(); });
 on('adm-tab',function(d){ UI.adm.tab=d.t; UI.adm.order=null; UI.adm.mais=null; render(); scrollAdmTop(); });
-on('adm-kpi',function(d){ UI.adm.tab='pedidos'; UI.adm.filter=d.f; UI.adm.filterTipo='todos'; UI.adm.filterPay='todos'; UI.adm.order=null; UI.adm.mais=null; render(); });
+on('adm-kpi',function(d){ UI.adm.tab='pedidos'; UI.adm.filter=d.f; UI.adm.filterTipo='todos'; UI.adm.filterPay='todos'; UI.adm.filterDia='hoje'; UI.adm.order=null; UI.adm.mais=null; render(); });
 on('adm-filter',function(d){ UI.adm.filter=d.f; render(); });
+on('adm-filter-dia',function(d){ UI.adm.filterDia=d.f; render(); });
 on('adm-filter-tipo',function(d){ UI.adm.filterTipo=d.f; render(); });
 on('adm-filter-pay',function(d){ UI.adm.filterPay=d.f; render(); });
 on('adm-open',function(d){ UI.adm.order=d.id; render(); scrollAdmTop(); });
@@ -1932,7 +1939,7 @@ function initUI(){
     chk:{modo:null,bairro:'',rua:'',numero:'',comp:'',ref:'',nome:'',whats:'',pay:null,troco:'',comprov:null,obs:''}, cupom:null,
     cart:[], login:null, me:{nome:'',tel:'',foto:null,enderecos:[]},
     curOrder:null, _pdId:null,
-    adm:{logged:false,user:null,tab:'visao',filter:'todos',filterTipo:'todos',filterPay:'todos',order:null,mais:null,relPer:'tudo',cliQ:'',cliFilter:'todos',_pedit:null} };
+    adm:{logged:false,user:null,tab:'visao',filter:'todos',filterTipo:'todos',filterPay:'todos',filterDia:'hoje',order:null,mais:null,relPer:'tudo',cliQ:'',cliFilter:'todos',_pedit:null} };
 }
 /* ---- Sessão do painel do DONO: fica salva 24h no aparelho pra a Fábia não deslogar toda hora ---- */
 var ADM_SESSAO_MS = 24*60*60*1000;  // 24 horas (mude aqui se quiser menos)
