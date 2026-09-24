@@ -902,7 +902,12 @@ function admVisao(){
       (cx.qtd.cartao?cxr('Cartão (sem tipo)',cx.val.cartao,cx.qtd.cartao):'')+
       '<div class="dp-line" style="border-top:1px solid var(--line);margin-top:4px;padding-top:8px"><span>Almoço / Janta</span><strong>'+money(cx.almT)+' / '+money(cx.janT)+'</strong></div>'+
       '<div class="dp-line big"><strong>Total do dia</strong><strong class="gold">'+money(cx.tot)+'</strong></div>'+
-      '<button class="btn btn-primary btn-block" style="margin-top:10px" data-action="adm-fechamento">'+ic('printer')+' Imprimir fechamento</button></div>';
+      (ehNoite()
+        ? '<button class="btn btn-primary btn-block" style="margin-top:10px" data-action="adm-fechar-caixa" data-p="janta">'+ic('printer')+' Fechar Caixa Janta</button>'+
+          '<button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="adm-fechar-caixa" data-p="almoco">'+ic('printer')+' Fechar Caixa Almoço</button>'
+        : '<button class="btn btn-primary btn-block" style="margin-top:10px" data-action="adm-fechar-caixa" data-p="almoco">'+ic('printer')+' Fechar Caixa Almoço</button>'+
+          '<button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="adm-fechar-caixa" data-p="janta">'+ic('printer')+' Fechar Caixa Janta</button>')+
+      '</div>';
   }
   var esgotados=S.produtos.filter(function(p){return p.disp==='esgotado';}).length;
   if(esgotados) h+='<div class="notice info" style="margin-top:16px">'+ic('info')+'<div>'+esgotados+' produto(s) marcados como esgotados hoje.</div></div>';
@@ -1256,9 +1261,9 @@ on('adm-bt-disconnect',function(){ btpDisconnect(); });
 /* ===== CAIXA: forma de pagamento + período + impressão do fechamento ===== */
 function metodoCaixa(o){ var p=(o&&o.pay)||{}; if(p.metodo==='pix')return 'pix'; if(p.metodo==='dinheiro')return 'dinheiro'; if(p.metodo==='cartao')return p.cartaoTipo==='debito'?'debito':(p.cartaoTipo==='credito'?'credito':'cartao'); return 'dinheiro'; }
 function periodoPedido(o){ var h=parseInt(String((o&&o.criadoEm)||'0').split(':')[0],10)||0; return h<16?'almoco':'janta'; }
-function caixaDoDia(dia){
+function caixaDoDia(dia,periodo){
   dia=dia||hoje();
-  var concl=(S.pedidos||[]).filter(function(p){return p.status==='concluido'&&p.dia===dia;});
+  var concl=(S.pedidos||[]).filter(function(p){return p.status==='concluido'&&p.dia===dia&&(!periodo||periodoPedido(p)===periodo);});
   var val={pix:0,debito:0,credito:0,dinheiro:0,cartao:0}, qtd={pix:0,debito:0,credito:0,dinheiro:0,cartao:0};
   var almT=0,janT=0,almN=0,janN=0,tot=0;
   concl.forEach(function(p){ var k=metodoCaixa(p); val[k]+=p.total; qtd[k]++; tot+=p.total; if(periodoPedido(p)==='almoco'){almT+=p.total;almN++;}else{janT+=p.total;janN++;} });
@@ -1289,12 +1294,12 @@ function htmlThermalFromRows(rows){
 }
 function mpuRows_(rows){ try{ var b64=btoa(unescape(encodeURIComponent(htmlThermalFromRows(rows)))); window.location.href='com.samathosoft.webprint://#deb64#'+b64; return true; }catch(e){ return false; } }
 function shareRows_(rows,nome){ try{ var f=dataURLtoFile(canvasFromRows(rows).toDataURL('image/png'),(nome||'doc')+'.png'); if(navigator.canShare&&navigator.canShare({files:[f]})){ navigator.share({files:[f]}).then(function(){toast('Escolha o app da impressora','info');},function(){}); return true; } }catch(e){} return false; }
-function fechamentoRows(dia){
-  var cx=caixaDoDia(dia), Sz=19, rows=[];
+function fechamentoRows(dia,periodo){
+  var cx=caixaDoDia(dia,periodo), Sz=19, rows=[];
   function row(t,size,bold,align){ rows.push({t:t,size:size||Sz,bold:!!bold,align:align||'left'}); }
   function sep(){ row('--------------------------------',Sz); }
   row('DM ESPETINHO',30,true,'center');
-  row('FECHAMENTO DE CAIXA',20,true,'center');
+  row(periodo==='almoco'?'FECHAMENTO ALMOCO':(periodo==='janta'?'FECHAMENTO JANTA':'FECHAMENTO DE CAIXA'),20,true,'center');
   row(cx.dia,Sz,false,'center');
   row('Emitido as '+nowHM(),14,false,'center');
   sep();
@@ -1305,16 +1310,14 @@ function fechamentoRows(dia){
   row(ln2('Cartao Credito ('+cx.qtd.credito+')', money(cx.val.credito)),Sz);
   if(cx.qtd.cartao) row(ln2('Cartao s/ tipo ('+cx.qtd.cartao+')', money(cx.val.cartao)),Sz);
   sep();
-  row(ln2('Almoco ('+cx.almN+')', money(cx.almT)),Sz);
-  row(ln2('Janta ('+cx.janN+')', money(cx.janT)),Sz);
-  sep();
+  if(!periodo){ row(ln2('Almoco ('+cx.almN+')', money(cx.almT)),Sz); row(ln2('Janta ('+cx.janN+')', money(cx.janT)),Sz); sep(); }
   row(ln2('TOTAL ('+cx.n+' pedidos)', money(cx.tot)),24,true);
   sep();
   row('Conferido por:',Sz); row('',Sz); row('____________________________',Sz);
   return rows;
 }
-function imprimirFechamento(dia){
-  var rows=fechamentoRows(dia);
+function imprimirFechamento(dia,periodo){
+  var rows=fechamentoRows(dia,periodo);
   if(btpConectado()){ return btpWrite(escposFromRows(rows)).then(function(){ toast('Fechamento enviado a impressora','ok'); }, function(){ abrirFechamento_(rows); }); }
   if(btpSupported() && BTP.device){ return btpReconnect().then(function(ok){ if(ok){ return btpWrite(escposFromRows(rows)).then(function(){ toast('Fechamento enviado a impressora','ok'); }); } if(isIOS()&&mpuRows_(rows)) return; if(isTouchShare()&&shareRows_(rows,'fechamento')) return; abrirFechamento_(rows); }); }
   if(isIOS() && mpuRows_(rows)) return;
@@ -1333,6 +1336,7 @@ function abrirFechamento_(rows){
 on('do-doc-mpu',function(){ if(UI._docRows) mpuRows_(UI._docRows); });
 on('do-doc-share',function(){ if(UI._docRows) shareRows_(UI._docRows,'fechamento'); });
 on('adm-fechamento',function(){ imprimirFechamento(hoje()); });
+on('adm-fechar-caixa',function(d){ imprimirFechamento(hoje(), d.p==='janta'?'janta':'almoco'); });
 
 /* Cardápio (admin) */
 function admCardapio(){
