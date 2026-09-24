@@ -667,13 +667,19 @@ function cliPagamento(){
 }
 
 /* confirmado + tracker */
+function precisaComprovanteWhats(o){ return o.pay.metodo==='pix' && o.pay.viaWhats && o.pay.status!=='aprovado' && ['em_validacao','aguardando_comprovante'].indexOf(o.status)>=0; }
 function cliConfirmado(){
   var o=order(UI.curOrder); if(!o) return cliHome();
+  var wa;
+  if(precisaComprovanteWhats(o))
+    wa='<div class="notice warn left" style="margin-top:12px">'+ic('warn')+'<div><strong>Falta só o comprovante!</strong> Toque no botão abaixo e envie o print do Pix no nosso WhatsApp pra confirmar seu pedido.</div></div>'+
+       '<a class="btn btn-primary btn-block btn-lg" style="text-decoration:none;margin-top:8px" href="'+waLink(S.loja.whats,waComprovanteMsg_(o))+'" target="_blank" rel="noopener">'+ic('chat')+' Enviar comprovante no WhatsApp</a>';
+  else
+    wa='<a class="btn btn-outline btn-block" style="text-decoration:none;margin-top:12px" href="'+waLink(S.loja.whats,'')+'" target="_blank" rel="noopener">'+ic('chat')+' Falar no WhatsApp</a>';
   return '<div class="ok-hero">'+ic('checkc','xl gold')+'<h2>Pedido enviado!</h2>'+
     '<p>Pedido '+esc(o.id)+' · '+esc(statusCliente(o).lbl)+'</p></div>'+
-    trackerHTML(o)+resumoPedidoBox(o)+
-    '<a class="btn btn-outline btn-block" style="text-decoration:none;margin-top:12px" href="https://wa.me/55'+S.loja.whats.replace(/\D/g,'')+'" target="_blank" rel="noopener">'+ic('chat')+' Falar no WhatsApp</a>'+
-    '<div class="sp"></div><button class="btn btn-primary btn-block" data-action="cli-go" data-s="pedidos">Ver meus pedidos</button>';
+    trackerHTML(o)+resumoPedidoBox(o)+wa+
+    '<div class="sp"></div><button class="btn '+(precisaComprovanteWhats(o)?'btn-ghost':'btn-primary')+' btn-block" data-action="cli-go" data-s="pedidos">Ver meus pedidos</button>';
 }
 function cliTrack(){
   var o=order(UI.curOrder); if(!o) return cliPedidos();
@@ -683,7 +689,11 @@ function cliTrack(){
     h+='<div class="sp"></div><button class="btn btn-primary btn-block" data-action="cli-reenviar" data-id="'+o.id+'">'+ic('attach')+' Reenviar comprovante</button>';
   if(['em_validacao','aguardando_comprovante','aguardando_aceite'].indexOf(o.status)>=0)
     h+='<div class="sp-sm"></div><button class="btn btn-red btn-block" data-action="cli-cancelar" data-id="'+o.id+'">Cancelar pedido</button>';
-  h+='<a class="btn btn-outline btn-block" style="text-decoration:none;margin-top:10px" href="https://wa.me/55'+S.loja.whats.replace(/\D/g,'')+'" target="_blank" rel="noopener">'+ic('chat')+' Falar no WhatsApp</a>';
+  if(precisaComprovanteWhats(o))
+    h+='<div class="notice warn left" style="margin-top:12px">'+ic('warn')+'<div><strong>Falta o comprovante do Pix.</strong> Envie o print no nosso WhatsApp pra confirmar o pedido.</div></div>'+
+       '<a class="btn btn-primary btn-block btn-lg" style="text-decoration:none;margin-top:8px" href="'+waLink(S.loja.whats,waComprovanteMsg_(o))+'" target="_blank" rel="noopener">'+ic('chat')+' Enviar comprovante no WhatsApp</a>';
+  else
+    h+='<a class="btn btn-outline btn-block" style="text-decoration:none;margin-top:10px" href="'+waLink(S.loja.whats,'')+'" target="_blank" rel="noopener">'+ic('chat')+' Falar no WhatsApp</a>';
   return h;
 }
 function trackerHTML(o){
@@ -1269,6 +1279,13 @@ function caixaDoDia(dia,periodo){
   concl.forEach(function(p){ var k=metodoCaixa(p); val[k]+=p.total; qtd[k]++; tot+=p.total; if(periodoPedido(p)==='almoco'){almT+=p.total;almN++;}else{janT+=p.total;janN++;} });
   return {dia:dia,val:val,qtd:qtd,almT:almT,janT:janT,almN:almN,janN:janN,tot:tot,n:concl.length};
 }
+// resumo de itens vendidos (do que saiu no período) pra noção de estoque
+function caixaItens(dia,periodo){
+  var concl=(S.pedidos||[]).filter(function(p){return p.status==='concluido'&&p.dia===dia&&(!periodo||periodoPedido(p)===periodo);});
+  var m={};
+  concl.forEach(function(p){ (p.itens||[]).forEach(function(i){ var nome=i.nome||'Item'; m[nome]=(m[nome]||0)+(i.qty||1); }); });
+  return Object.keys(m).map(function(k){return {nome:k,qty:m[k]};}).sort(function(a,b){return b.qty-a.qty || String(a.nome).localeCompare(String(b.nome));});
+}
 /* impressão genérica por linhas (reaproveita o mesmo caminho: BT Android / iPhone MPU / compartilhar / sistema) */
 function escposFromRows(rows){
   var B=[];
@@ -1313,6 +1330,8 @@ function fechamentoRows(dia,periodo){
   if(!periodo){ row(ln2('Almoco ('+cx.almN+')', money(cx.almT)),Sz); row(ln2('Janta ('+cx.janN+')', money(cx.janT)),Sz); sep(); }
   row(ln2('TOTAL ('+cx.n+' pedidos)', money(cx.tot)),24,true);
   sep();
+  var itens=caixaItens(dia,periodo);
+  if(itens.length){ row('ITENS VENDIDOS',Sz,true,'center'); itens.forEach(function(x){ row(ln2(x.nome, x.qty+'x'),Sz); }); sep(); }
   row('Conferido por:',Sz); row('',Sz); row('____________________________',Sz);
   return rows;
 }
@@ -1627,13 +1646,14 @@ on('chk-pix-whats',function(){
   var av=revalidarCarrinho();
   if(av.length){ toast(av[0]+'. Confira a sacola.','err'); UI.cli.screen='carrinho'; render(); return; }
   if(c.modo==='delivery' && c.bairro!=='__outro'){ var b=bairro(c.bairro); if(b&&b.min>0&&cartSubtotal()<b.min){ toast('Pedido mínimo de '+money(b.min)+' para '+c.bairro,'err'); return; } }
-  var wa=S.loja.whats, nomeCli=(c.nome||UI.me.nome||'').trim();
+  var wa=S.loja.whats;
   c.comprov=null; c.viaWhats=true;
-  var o=criarPedido();   // status em_validacao, comprovante pelo WhatsApp
-  var msg='Olá! Fiz o pedido '+(o?o.id:'')+' pelo app'+(nomeCli?' no nome de '+nomeCli:'')+' e vou enviar o comprovante do Pix por aqui.';
-  try{ window.open(waLink(wa,msg),'_blank','noopener'); }catch(e){ try{ location.href=waLink(wa,msg); }catch(e2){} }
-  toast('Pedido enviado! Mande o comprovante no WhatsApp.','ok');
+  var o=criarPedido();   // status em_validacao, comprovante pelo WhatsApp (a página NÃO navega pra fora)
+  // tenta abrir o WhatsApp (best-effort). NÃO usar location.href: navegar pra fora mata a página antes do pedido subir pra nuvem.
+  if(o){ try{ window.open(waLink(wa,waComprovanteMsg_(o)),'_blank'); }catch(e){} }
+  toast('Pedido enviado! Toque em "Enviar comprovante no WhatsApp" pra mandar o print.','ok');
 });
+function waComprovanteMsg_(o){ return 'Olá! Fiz o pedido '+o.id+' pelo app'+(o.nome?' no nome de '+o.nome:'')+' e vou enviar o comprovante do Pix por aqui.'; }
 function criarPedido(){
   var c=UI.chk, sub=cartSubtotal(), taxa=c.modo==='delivery'?(S.loja.taxaEntrega||0):0, desc=descontoValor(sub);
   var payMap={pix:'Pix com comprovante',dinheiro:'Dinheiro no local',cartao:'Cartão no local'};
