@@ -1051,12 +1051,20 @@ function payStatusLabel(o){
 function admAcoes(o){
   switch(o.status){
     case 'em_validacao':
+      // Pix com comprovante pelo WhatsApp: o dono confere no zap e aceita direto (flui igual dinheiro/cartão)
+      if(o.pay.viaWhats)
+        return '<button class="btn btn-primary btn-block btn-lg" data-action="adm-aceitar" data-id="'+o.id+'">'+ic('printer')+' Aceitar pedido e imprimir cupom</button>'+
+               '<button class="btn btn-red btn-block" data-action="adm-recusar" data-id="'+o.id+'">Recusar pedido</button>';
       return '<button class="btn btn-green btn-block" data-action="adm-aprovar-pix" data-id="'+o.id+'">'+ic('check')+' Aprovar pagamento (Pix confirmado)</button>'+
              '<button class="btn btn-outline btn-block" data-action="adm-solicitar-comprov" data-id="'+o.id+'">'+ic('attach')+' Solicitar novo comprovante</button>'+
              '<button class="btn btn-red btn-block" data-action="adm-recusar" data-id="'+o.id+'">Recusar pedido</button>';
     case 'aguardando_comprovante':
-      return '<div class="notice info">'+ic('info')+'<div>Aguardando o cliente reenviar o comprovante.</div></div>'+
-             '<button class="btn btn-red btn-block" data-action="adm-recusar" data-id="'+o.id+'">Recusar pedido</button>';
+      // se o comprovante veio pelo WhatsApp, o dono pode aceitar direto (recupera pedido que travou aqui)
+      return (o.pay.viaWhats
+        ? '<div class="notice info">'+ic('chat')+'<div>Comprovante pelo WhatsApp. Confira no zap pelo nome (<strong>'+esc(o.nome)+'</strong>) e aceite o pedido.</div></div>'+
+          '<button class="btn btn-primary btn-block btn-lg" data-action="adm-aceitar" data-id="'+o.id+'">'+ic('printer')+' Aceitar pedido e imprimir cupom</button>'
+        : '<div class="notice info">'+ic('info')+'<div>Aguardando o cliente reenviar o comprovante.</div></div>')+
+        '<button class="btn btn-red btn-block" data-action="adm-recusar" data-id="'+o.id+'">Recusar pedido</button>';
     case 'aguardando_aceite':
       return '<button class="btn btn-primary btn-block btn-lg" data-action="adm-aceitar" data-id="'+o.id+'">'+ic('printer')+' Aceitar e imprimir cupom</button>'+
              '<button class="btn btn-red btn-block" data-action="adm-recusar" data-id="'+o.id+'">Recusar pedido</button>';
@@ -1786,7 +1794,11 @@ function guard(o,st){ if(!o||st.indexOf(o.status)<0){ toast('Ação indisponíve
 on('adm-aprovar-pix',function(d){ var o=order(d.id); if(!guard(o,['em_validacao']))return; o.pay.status='aprovado'; o.status='aguardando_aceite'; addHist(o,'Aprovou o Pix'); audit('Aprovou Pix '+o.id,o.id); save(); toast('Pix confirmado. Agora aceite e imprima.','ok'); render(); });
 on('adm-solicitar-comprov',function(d){ var o=order(d.id); if(!guard(o,['em_validacao']))return; o.status='aguardando_comprovante'; o.pay.status='pendente'; addHist(o,'Pediu novo comprovante'); save(); toast('Cliente vai poder reenviar o comprovante','info'); render(); });
 on('adm-recusar',function(d){ var o=order(d.id); if(!guard(o,['em_validacao','aguardando_comprovante','aguardando_aceite']))return; pedirMotivo('Recusar pedido',['Comprovante ilegível','Valor divergente','Fora da área de entrega','Produto indisponível'],function(m){ o.status='recusado'; o.pay.motivoRecusa=m; addHist(o,'Recusou: '+m); audit('Recusou '+o.id,o.id); save(); toast('Pedido recusado','err'); render(); }); });
-on('adm-aceitar',function(d){ var o=order(d.id); if(!guard(o,['aguardando_aceite']))return; o.status='em_preparo'; o.reimpressoes=0; addHist(o,'Aceitou e imprimiu o cupom'); audit('Aceitou '+o.id,o.id); save(); imprimirCupom(o,false); toast('Pedido aceito. Foi para a cozinha.','ok'); });
+on('adm-aceitar',function(d){ var o=order(d.id);
+  var okSt=(o&&o.pay&&o.pay.metodo==='pix'&&o.pay.viaWhats)?['aguardando_aceite','em_validacao','aguardando_comprovante']:['aguardando_aceite'];
+  if(!guard(o,okSt))return;
+  if(o.pay.metodo==='pix'&&o.pay.status!=='aprovado') o.pay.status='aprovado';   // aceitar o Pix pelo WhatsApp confirma o pagamento
+  o.status='em_preparo'; o.reimpressoes=0; addHist(o,'Aceitou e imprimiu o cupom'); audit('Aceitou '+o.id,o.id); save(); render(); imprimirCupom(o,false); toast('Pedido aceito. Foi para a cozinha.','ok'); });
 on('adm-reimprimir',function(d){ var o=order(d.id); if(!o)return; o.reimpressoes=(o.reimpressoes||0)+1; addHist(o,'Reimprimiu (via '+(o.reimpressoes+1)+')'); save(); imprimirCupom(o,true); });
 on('adm-pronto',function(d){ var o=order(d.id); if(!guard(o,['em_preparo']))return; o.status='pronto'; addHist(o,'Marcou como pronto'); save(); toast('Pedido pronto','ok'); render(); });
 on('adm-saiu',function(d){ var o=order(d.id); if(!guard(o,['pronto']))return; if(o.tipo!=='delivery'){ toast('Retirada não sai para entrega','err'); return; } o.status='saiu'; addHist(o,'Saiu para entrega'); save(); toast('Saiu para entrega','ok'); render(); });
