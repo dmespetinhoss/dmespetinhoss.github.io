@@ -10,6 +10,7 @@ var APP_MODE = (typeof window!=='undefined' && window.DM_APP==='admin') ? 'admin
 var REVKEY = 'dm_delivery_rev';          // token de versão: muda a cada gravação, pra detectar mudança de outra aba/PWA
 var CARTKEY = 'dm_delivery_cart';        // carrinho do cliente (local, sobrevive ao recarregar)
 var ADMKEY = 'dm_delivery_adm';          // sessão do painel do dono (fica 24h no aparelho pra não deslogar toda hora)
+var CHKKEY = 'dm_delivery_chk';          // estado do checkout (retomar na mesma tela se o app recarregar ao voltar do WhatsApp)
 var lastRev = null;
 var bc = null; try{ if(typeof BroadcastChannel!=='undefined') bc = new BroadcastChannel('dm_delivery'); }catch(e){ bc=null; }
 /* ===== Sincronização na nuvem (Supabase) — cross-device (celular <-> computador) ===== */
@@ -218,6 +219,27 @@ function seedOrder(o){
 
 /* persistência */
 function persistLocal(){ if(APP_MODE==='admin') return; try{ localStorage.setItem(MEKEY, JSON.stringify(UI.me)); localStorage.setItem(CARTKEY, JSON.stringify(UI.cart)); }catch(e){} }
+var CHECKOUT_SCREENS=['carrinho','receber','endereco','dados','pagamento'];
+// salva o passo do checkout (endereço, forma de pagamento, "já abriu o WhatsApp") pra retomar na mesma tela se o app recarregar
+function persistChk(){
+  if(APP_MODE==='admin') return;
+  try{
+    if(UI.cart.length && CHECKOUT_SCREENS.indexOf(UI.cli.screen)>=0){
+      var ck=Object.assign({},UI.chk); ck.comprov=null;   // não guarda a imagem do comprovante (pode ser grande) — re-anexa se recarregar
+      localStorage.setItem(CHKKEY, JSON.stringify({chk:ck, screen:UI.cli.screen, t:Date.now()}));
+    } else { localStorage.removeItem(CHKKEY); }
+  }catch(e){}
+}
+function restoreChk(){
+  if(APP_MODE==='admin') return;
+  try{
+    var raw=localStorage.getItem(CHKKEY); if(!raw) return;
+    var d=JSON.parse(raw); if(!d||!d.chk){ localStorage.removeItem(CHKKEY); return; }
+    if(!UI.cart.length || CHECKOUT_SCREENS.indexOf(d.screen)<0 || (d.t && Date.now()-d.t > 6*60*60*1000)){ localStorage.removeItem(CHKKEY); return; } // sem sacola ou sessão velha (6h)
+    UI.chk=Object.assign(UI.chk, d.chk);
+    UI.cli.screen=d.screen;
+  }catch(e){}
+}
 function saveCliente(){ persistLocal(); if(CLOUD) cloudCliUpsert(); }   // salva perfil + carrinho do cliente (local + conta na nuvem)
 function save(){ if(PREVIEW) return; try{ localStorage.setItem(LSKEY, JSON.stringify(S)); persistLocal(); if(CLOUD) cloudPush(); else marcarRev(); }catch(e){} }
 
@@ -1645,8 +1667,9 @@ on('chk-pix-whats-abrir',function(){
   var c=UI.chk; if(c.pay!=='pix') return;
   var nome=(c.nome||UI.me.nome||'').trim();
   var msg='Olá! Sou '+(nome||'cliente')+' e vou enviar o comprovante do Pix do meu pedido do DM Espetinho por aqui.';
+  c.waAberto=true; persistChk();   // salva ANTES de sair pro WhatsApp: se o app recarregar, volta na tela do Pix com o botão liberado
   try{ window.open(waLink(S.loja.whats,msg),'_blank'); }catch(e){}
-  c.waAberto=true; render();
+  render();
   toast('Mande o print no WhatsApp e volte pra tocar em "Já enviei o comprovante".','info');
 });
 // PASSO 2: só libera depois do passo 1 -> aí sim cria o pedido e vai pra guia do pedido (igual cartão/dinheiro)
@@ -1680,6 +1703,7 @@ function criarPedido(){
   if(CLOUD) cloudCliUpsert();   // sincroniza a conta/endereços do cliente na nuvem
   UI.curOrder=ped.id; UI.cart=[]; UI.cupom=null;
   UI.chk={modo:null,bairro:'',rua:'',numero:'',comp:'',ref:'',nome:c.nome,whats:c.whats,pay:null,troco:'',comprov:null,obs:''};
+  try{ localStorage.removeItem(CHKKEY); }catch(e){}   // checkout concluído: não retomar depois
   UI.cli.screen='confirmado'; save(); render();
   return ped;
 }
@@ -2013,7 +2037,7 @@ function boot(){
   var restored=load();
   if(restored){ var maxN=100; S.pedidos.forEach(function(p){ var n=parseInt(String(p.id).replace('#',''),10); if(n>maxN)maxN=n; }); seedCounter=maxN; }
   try{ lastRev=localStorage.getItem(REVKEY); }catch(e){}
-  restaurarSessaoAdm_(); render(); admOnReady_();
+  restaurarSessaoAdm_(); restoreChk(); render(); admOnReady_();
 }
 /* Sincronização entre abas E apps instalados (PWA): storage + BroadcastChannel + polling + foco/visibilidade.
    O polling (a cada 1.5s) garante o sync mesmo no PWA, onde o evento 'storage' não cruza a janela. */
@@ -2036,7 +2060,7 @@ function cloudPull(){
 }
 function cloudSubscribe(){ if(!sb) return; try{ sb.channel('estado-rt').on('postgres_changes',{event:'*',schema:'public',table:'estado'}, function(){ cloudPull(); }).subscribe(); }catch(e){} }
 function cloudBoot(){
-  initUI(); seed(); load(); restaurarSessaoAdm_(); render(); admOnReady_();   // pinta na hora com cache local; a nuvem sobrescreve em seguida
+  initUI(); seed(); load(); restaurarSessaoAdm_(); restoreChk(); render(); admOnReady_();   // pinta na hora com cache local; a nuvem sobrescreve em seguida
   refreshCliente();   // puxa a conta/endereços do cliente logado (ou cria a linha se ainda não existir)
   sb.from('estado').select('data,rev').eq('id',1).single().then(function(r){
     if(r&&r.data&&r.data.data&&r.data.data.produtos){ if(aplicarNuvem(r.data)) render(); }
@@ -2049,7 +2073,8 @@ function cloudBoot(){
 if(CLOUD && !PREVIEW){
   cloudBoot();
   window.addEventListener('focus', function(){ cloudPull(); refreshCliente(); admOnReady_(); });
-  if(typeof document!=='undefined') document.addEventListener('visibilitychange', function(){ if(!document.hidden){ cloudPull(); refreshCliente(); admOnReady_(); } });
+  if(typeof document!=='undefined') document.addEventListener('visibilitychange', function(){ if(document.hidden){ persistChk(); } else { cloudPull(); refreshCliente(); admOnReady_(); } });
+  window.addEventListener('pagehide', function(){ persistChk(); });
 } else {
   if(bc){ bc.onmessage=function(ev){ if(ev&&ev.data&&ev.data!==lastRev){ lastRev=ev.data; if(reloadShared()) render(); } }; }
   window.addEventListener('storage', function(e){ if(e.key===LSKEY||e.key===REVKEY) syncCheck(); });
