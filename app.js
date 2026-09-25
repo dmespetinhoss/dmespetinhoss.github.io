@@ -653,8 +653,9 @@ function cliPagamento(){
       '<textarea class="pix-code" readonly onclick="this.select()" aria-label="Código Pix copia e cola">'+esc(pix.code)+'</textarea>'+
       '<div class="upload-wrap"><label class="up-lb">Comprovante do Pix</label>'+
       '<div class="upload'+(c.comprov?' has':'')+'" data-action="chk-upload">'+(c.comprov?ic('check')+' Comprovante anexado<img src="'+c.comprov+'">':ic('attach')+' Toque para anexar o comprovante')+'</div>'+
-      '<button class="btn btn-outline btn-sm btn-block" style="margin-top:8px" data-action="chk-pix-whats">'+ic('chat')+' Não consegui anexar - enviar no WhatsApp</button></div>'+
-      '<div class="notice info left">'+ic('info')+'<div><strong>Não consegue anexar?</strong> Toque em <strong>"Não consegui anexar - enviar no WhatsApp"</strong>: o pedido é <strong>enviado do mesmo jeito</strong> e você manda o comprovante por lá. O restaurante confere pelo seu nome e confirma. Quem consegue anexar, é só anexar acima e tocar em "Enviar pedido para validação".</div></div></div>';
+      '<button class="btn btn-outline btn-sm btn-block" style="margin-top:8px" data-action="chk-pix-whats-abrir">'+ic('chat')+' 1. Enviar comprovante no WhatsApp</button>'+
+      '<button class="btn '+(c.waAberto?'btn-primary':'btn-ghost')+' btn-sm btn-block" style="margin-top:8px" data-action="chk-pix-whats-enviei"'+(c.waAberto?'':' disabled')+'>'+ic(c.waAberto?'check':'lock')+' 2. Já enviei o comprovante - fazer pedido</button></div>'+
+      '<div class="notice info left">'+ic('info')+'<div><strong>Não consegue anexar?</strong> <strong>1)</strong> Toque em "Enviar comprovante no WhatsApp" e mande o print do Pix. <strong>2)</strong> Volte aqui e toque em "Já enviei o comprovante" pra fazer o pedido'+(c.waAberto?'':' (esse botão libera depois do passo 1)')+'. Quem consegue anexar, anexa acima e toca em "Enviar pedido para validação".</div></div></div>';
   } else if(c.pay==='dinheiro'){
     h+='<div class="card"><div class="field"><label>Precisa de troco? Para quanto? (opcional)</label><input inputmode="numeric" data-oninput="chk-f" data-k="troco" value="'+esc(c.troco)+'" placeholder="Ex.: 50"></div></div>';
   } else if(c.pay==='cartao'){
@@ -672,14 +673,14 @@ function cliConfirmado(){
   var o=order(UI.curOrder); if(!o) return cliHome();
   var wa;
   if(precisaComprovanteWhats(o))
-    wa='<div class="notice warn left" style="margin-top:12px">'+ic('warn')+'<div><strong>Falta só o comprovante!</strong> Toque no botão abaixo e envie o print do Pix no nosso WhatsApp pra confirmar seu pedido.</div></div>'+
-       '<a class="btn btn-primary btn-block btn-lg" style="text-decoration:none;margin-top:8px" href="'+waLink(S.loja.whats,waComprovanteMsg_(o))+'" target="_blank" rel="noopener">'+ic('chat')+' Enviar comprovante no WhatsApp</a>';
+    wa='<div class="notice ok left" style="margin-top:12px">'+ic('checkc')+'<div><strong>Comprovante enviado pelo WhatsApp.</strong> Aguarde o restaurante conferir o Pix e confirmar seu pedido. Precisa reenviar?</div></div>'+
+       '<a class="btn btn-outline btn-block" style="text-decoration:none;margin-top:8px" href="'+waLink(S.loja.whats,waComprovanteMsg_(o))+'" target="_blank" rel="noopener">'+ic('chat')+' Reenviar comprovante no WhatsApp</a>';
   else
     wa='<a class="btn btn-outline btn-block" style="text-decoration:none;margin-top:12px" href="'+waLink(S.loja.whats,'')+'" target="_blank" rel="noopener">'+ic('chat')+' Falar no WhatsApp</a>';
   return '<div class="ok-hero">'+ic('checkc','xl gold')+'<h2>Pedido enviado!</h2>'+
     '<p>Pedido '+esc(o.id)+' · '+esc(statusCliente(o).lbl)+'</p></div>'+
     trackerHTML(o)+resumoPedidoBox(o)+wa+
-    '<div class="sp"></div><button class="btn '+(precisaComprovanteWhats(o)?'btn-ghost':'btn-primary')+' btn-block" data-action="cli-go" data-s="pedidos">Ver meus pedidos</button>';
+    '<div class="sp"></div><button class="btn btn-primary btn-block" data-action="cli-go" data-s="pedidos">Ver meus pedidos</button>';
 }
 function cliTrack(){
   var o=order(UI.curOrder); if(!o) return cliPedidos();
@@ -690,8 +691,8 @@ function cliTrack(){
   if(['em_validacao','aguardando_comprovante','aguardando_aceite'].indexOf(o.status)>=0)
     h+='<div class="sp-sm"></div><button class="btn btn-red btn-block" data-action="cli-cancelar" data-id="'+o.id+'">Cancelar pedido</button>';
   if(precisaComprovanteWhats(o))
-    h+='<div class="notice warn left" style="margin-top:12px">'+ic('warn')+'<div><strong>Falta o comprovante do Pix.</strong> Envie o print no nosso WhatsApp pra confirmar o pedido.</div></div>'+
-       '<a class="btn btn-primary btn-block btn-lg" style="text-decoration:none;margin-top:8px" href="'+waLink(S.loja.whats,waComprovanteMsg_(o))+'" target="_blank" rel="noopener">'+ic('chat')+' Enviar comprovante no WhatsApp</a>';
+    h+='<div class="notice ok left" style="margin-top:12px">'+ic('checkc')+'<div><strong>Comprovante enviado pelo WhatsApp.</strong> Aguardando o restaurante conferir e confirmar. Precisa reenviar?</div></div>'+
+       '<a class="btn btn-outline btn-block" style="text-decoration:none;margin-top:8px" href="'+waLink(S.loja.whats,waComprovanteMsg_(o))+'" target="_blank" rel="noopener">'+ic('chat')+' Reenviar comprovante no WhatsApp</a>';
   else
     h+='<a class="btn btn-outline btn-block" style="text-decoration:none;margin-top:10px" href="'+waLink(S.loja.whats,'')+'" target="_blank" rel="noopener">'+ic('chat')+' Falar no WhatsApp</a>';
   return h;
@@ -1639,19 +1640,26 @@ on('chk-finalizar',function(){
   criarPedido();
 });
 // Pix sem conseguir anexar: cria o pedido do mesmo jeito (cai no painel "em validação") e abre o WhatsApp pra mandar o comprovante
-on('chk-pix-whats',function(){
+// PASSO 1: só abre o WhatsApp (NÃO cria o pedido) e destrava o botão "já enviei"
+on('chk-pix-whats-abrir',function(){
+  var c=UI.chk; if(c.pay!=='pix') return;
+  var nome=(c.nome||UI.me.nome||'').trim();
+  var msg='Olá! Sou '+(nome||'cliente')+' e vou enviar o comprovante do Pix do meu pedido do DM Espetinho por aqui.';
+  try{ window.open(waLink(S.loja.whats,msg),'_blank'); }catch(e){}
+  c.waAberto=true; render();
+  toast('Mande o print no WhatsApp e volte pra tocar em "Já enviei o comprovante".','info');
+});
+// PASSO 2: só libera depois do passo 1 -> aí sim cria o pedido e vai pra guia do pedido (igual cartão/dinheiro)
+on('chk-pix-whats-enviei',function(){
   var c=UI.chk;
   if(c.pay!=='pix'){ toast('Escolha o Pix','err'); return; }
+  if(!c.waAberto){ toast('Primeiro toque em "Enviar comprovante no WhatsApp" e mande o print.','err'); return; }
   if(!lojaAberta()){ toast('Infelizmente estamos fechado no momento','err'); return; }
   var av=revalidarCarrinho();
   if(av.length){ toast(av[0]+'. Confira a sacola.','err'); UI.cli.screen='carrinho'; render(); return; }
   if(c.modo==='delivery' && c.bairro!=='__outro'){ var b=bairro(c.bairro); if(b&&b.min>0&&cartSubtotal()<b.min){ toast('Pedido mínimo de '+money(b.min)+' para '+c.bairro,'err'); return; } }
-  var wa=S.loja.whats;
   c.comprov=null; c.viaWhats=true;
-  var o=criarPedido();   // status em_validacao, comprovante pelo WhatsApp (a página NÃO navega pra fora)
-  // tenta abrir o WhatsApp (best-effort). NÃO usar location.href: navegar pra fora mata a página antes do pedido subir pra nuvem.
-  if(o){ try{ window.open(waLink(wa,waComprovanteMsg_(o)),'_blank'); }catch(e){} }
-  toast('Pedido enviado! Toque em "Enviar comprovante no WhatsApp" pra mandar o print.','ok');
+  criarPedido();   // status em_validacao (comprovante pelo WhatsApp) -> vai pra guia do pedido
 });
 function waComprovanteMsg_(o){ return 'Olá! Fiz o pedido '+o.id+' pelo app'+(o.nome?' no nome de '+o.nome:'')+' e vou enviar o comprovante do Pix por aqui.'; }
 function criarPedido(){
