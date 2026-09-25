@@ -2054,21 +2054,38 @@ function boot(){
 /* Sincronização entre abas E apps instalados (PWA): storage + BroadcastChannel + polling + foco/visibilidade.
    O polling (a cada 1.5s) garante o sync mesmo no PWA, onde o evento 'storage' não cruza a janela. */
 /* ---- nuvem (Supabase): estado compartilhado entre todos os aparelhos ---- */
+var _lastLocalPushAt=0;   // quando o dono/cliente gravou algo local (pra descartar resposta de poll em voo)
+/* rank das etapas: o pedido só anda pra frente. Usado pra a nuvem nunca reverter uma etapa. */
+var STATUS_RANK={aguardando_comprovante:1,em_validacao:1,aguardando_aceite:2,em_preparo:3,pronto:4,saiu:5,concluido:6,recusado:6,cancelado:6};
+function rankStatus_(s){ return STATUS_RANK[s]||0; }
 function cloudPush(){
   if(!sb) return;
   lastRev = String(Date.now())+'-'+Math.floor(Math.random()*1e6);
+  _lastLocalPushAt = Date.now();
   sb.from('estado').upsert({id:1,data:S,rev:lastRev,updated_at:new Date().toISOString()}).then(function(r){ if(r&&r.error) console.warn('DM cloud push:', r.error.message); });
 }
 function aplicarNuvem(row){
   if(!row||!row.rev||row.rev===lastRev) return false;
   if(!row.data||!row.data.produtos) return false;
-  lastRev=row.rev; S=row.data; if(!S.promos)S.promos=[];
+  var novo=row.data;
+  // não deixa um estado atrasado da nuvem REVERTER um pedido que aqui já avançou (corrida do poll/echo em voo)
+  try{
+    if(novo.pedidos && S && S.pedidos){
+      var locais={}; S.pedidos.forEach(function(p){ locais[p.id]=p; });
+      novo.pedidos=novo.pedidos.map(function(p){ var loc=locais[p.id]; return (loc && rankStatus_(loc.status)>rankStatus_(p.status)) ? loc : p; });
+    }
+  }catch(e){}
+  lastRev=row.rev; S=novo; if(!S.promos)S.promos=[];
   var maxN=100; S.pedidos.forEach(function(p){ var n=parseInt(String(p.id).replace('#',''),10); if(n>maxN)maxN=n; }); if(maxN>seedCounter)seedCounter=maxN;
   return true;
 }
 function cloudPull(){
   if(!sb) return Promise.resolve();
-  return sb.from('estado').select('data,rev').eq('id',1).single().then(function(r){ if(r&&r.data&&aplicarNuvem(r.data)) render(); }).catch(function(){});
+  var pulledAt=Date.now();
+  return sb.from('estado').select('data,rev').eq('id',1).single().then(function(r){
+    if(_lastLocalPushAt>pulledAt) return;   // gravei algo local depois que este pull saiu -> a resposta pode estar velha, ignora (não reverte)
+    if(r&&r.data&&aplicarNuvem(r.data)) render();
+  }).catch(function(){});
 }
 function cloudSubscribe(){ if(!sb) return; try{ sb.channel('estado-rt').on('postgres_changes',{event:'*',schema:'public',table:'estado'}, function(){ cloudPull(); }).subscribe(); }catch(e){} }
 function cloudBoot(){
