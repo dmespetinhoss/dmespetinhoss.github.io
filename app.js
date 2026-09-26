@@ -14,8 +14,8 @@ var CHKKEY = 'dm_delivery_chk';          // estado do checkout (retomar na mesma
 var lastRev = null;
 var bc = null; try{ if(typeof BroadcastChannel!=='undefined') bc = new BroadcastChannel('dm_delivery'); }catch(e){ bc=null; }
 /* ===== Sincronização na nuvem (Supabase) — cross-device (celular <-> computador) ===== */
-var SUPA_URL = 'https://qnsivomwbuftjxkwalcw.supabase.co';
-var SUPA_KEY = 'sb_publishable_Tv03zqfFDSIqCwj6029Usg_cJhQ6kih';
+var SUPA_URL = 'https://jfvdfjzrcpintumymwwc.supabase.co';
+var SUPA_KEY = 'sb_publishable_SK85hNylfmSoztk8yyY2NA_PFs2MN60';
 var CLOUD = !!(SUPA_URL && SUPA_KEY && typeof window!=='undefined' && window.supabase);
 var sb = CLOUD ? window.supabase.createClient(SUPA_URL, SUPA_KEY) : null;
 // modo vitrine: abrir com ?preview=1 mostra o cardápio do código (seed) SEM tocar na nuvem nem no site real
@@ -182,17 +182,20 @@ function seed(){
     pedidos:[], clientes:[], equipe:[{user:'denis',nome:'Dênis',papel:'admin'},{user:'atendente',nome:'Atendente',papel:'atendente'}],
     audit:[]
   };
-  var demoTel='(94) 99999-1234';
-  seedOrder({tel:demoTel,nome:'Mariana Silva',tipo:'delivery',bairro:'Centro',end:'Rua das Palmeiras, 42',ref:'Portão azul',
-    itens:[['p1',1,''],['p21',2,'']], pay:'pix', status:'em_validacao', min:22});
-  seedOrder({tel:'(94) 98888-7766',nome:'Pedro Almeida',tipo:'retirada',
-    itens:[['p12',1,''],['p13',1,'']], pay:'dinheiro', troco:'50', status:'aguardando_aceite', min:12});
-  seedOrder({tel:'(94) 97777-3322',nome:'Juliana Costa',tipo:'delivery',bairro:'São José',end:'Rua 7 de Setembro, 210',ref:'Perto do mercado',
-    itens:[['p1',1,'','Completo']], pay:'cartao', status:'em_preparo', min:31});
-  seedOrder({tel:demoTel,nome:'Mariana Silva',tipo:'delivery',bairro:'Centro',end:'Rua das Palmeiras, 42',ref:'Portão azul',
-    itens:[['p1',2,''],['p15',1,'']], pay:'pix', status:'concluido', min:60});
-  seedOrder({tel:'(94) 96666-1100',nome:'Carlos Souza',tipo:'retirada',
-    itens:[['p17',1,''],['p21',2,'']], pay:'dinheiro', status:'concluido', min:95});
+  // Pedidos de demonstração SÓ no modo local/prévia. Em produção (nuvem) NUNCA cria demo -> fecha a colisão de id (#101-#105) que corrompeu a base.
+  if(!CLOUD){
+    var demoTel='(94) 99999-1234';
+    seedOrder({tel:demoTel,nome:'Mariana Silva',tipo:'delivery',bairro:'Centro',end:'Rua das Palmeiras, 42',ref:'Portão azul',
+      itens:[['p1',1,''],['p21',2,'']], pay:'pix', status:'em_validacao', min:22});
+    seedOrder({tel:'(94) 98888-7766',nome:'Pedro Almeida',tipo:'retirada',
+      itens:[['p12',1,''],['p13',1,'']], pay:'dinheiro', troco:'50', status:'aguardando_aceite', min:12});
+    seedOrder({tel:'(94) 97777-3322',nome:'Juliana Costa',tipo:'delivery',bairro:'São José',end:'Rua 7 de Setembro, 210',ref:'Perto do mercado',
+      itens:[['p1',1,'','Completo']], pay:'cartao', status:'em_preparo', min:31});
+    seedOrder({tel:demoTel,nome:'Mariana Silva',tipo:'delivery',bairro:'Centro',end:'Rua das Palmeiras, 42',ref:'Portão azul',
+      itens:[['p1',2,''],['p15',1,'']], pay:'pix', status:'concluido', min:60});
+    seedOrder({tel:'(94) 96666-1100',nome:'Carlos Souza',tipo:'retirada',
+      itens:[['p17',1,''],['p21',2,'']], pay:'dinheiro', status:'concluido', min:95});
+  }
 }
 function seedOrder(o){
   var itens=o.itens.map(function(it){ var p=prod(it[0]); var varNome=it[3]||'', adics=it[4]||[];
