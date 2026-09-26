@@ -2068,7 +2068,12 @@ function aplicarNuvem(row){
 }
 function cloudPull(){
   if(!sb) return Promise.resolve();
-  return sb.from('estado').select('data,rev').eq('id',1).single().then(function(r){ if(r&&r.data&&aplicarNuvem(r.data)) render(); }).catch(function(){});
+  // ECONOMIA DE BANDA: puxa só o 'rev' (poucos bytes). Só baixa o estado inteiro quando algo mudou.
+  return sb.from('estado').select('rev').eq('id',1).single().then(function(r){
+    var rev = r && r.data && r.data.rev;
+    if(!rev || rev===lastRev) return;   // nada mudou -> não baixa o estado (evita estourar a cota de egress)
+    return sb.from('estado').select('data,rev').eq('id',1).single().then(function(r2){ if(r2&&r2.data&&aplicarNuvem(r2.data)) render(); });
+  }).catch(function(){});
 }
 function cloudSubscribe(){ if(!sb) return; try{ sb.channel('estado-rt').on('postgres_changes',{event:'*',schema:'public',table:'estado'}, function(){ cloudPull(); }).subscribe(); }catch(e){} }
 function cloudBoot(){
