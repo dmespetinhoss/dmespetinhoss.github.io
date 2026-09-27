@@ -172,7 +172,7 @@ function seed(){
   ];
   S = {
     loja:{ nome:'DM Espetinho', pausado:false, janelas:[['11:00','14:00'],['18:00','23:00']], horario:'Seg a Dom · 11h-14h e 18h-23h',
-      endereco:'Av. Getúlio Vargas, em frente à Pague Menos', whats:'(64) 99279-1748',
+      endereco:'Av. Getúlio Vargas, em frente à Pague Menos', whats:'(63) 99279-1748',
       instagram:'@Dm_Espetinho_Distribuidora',
       pixKey:'01802000119', pixNome:'Denis Moreira de Bastos', pixCidade:'BREU BRANCO', banner:'',
       taxaEntrega:3, prazoEntrega:'30-45 min', cupomAtivo:true,
