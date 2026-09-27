@@ -14,10 +14,11 @@ var CHKKEY = 'dm_delivery_chk';          // estado do checkout (retomar na mesma
 var lastRev = null;
 var bc = null; try{ if(typeof BroadcastChannel!=='undefined') bc = new BroadcastChannel('dm_delivery'); }catch(e){ bc=null; }
 /* ===== Sincronização na nuvem (Supabase) — cross-device (celular <-> computador) ===== */
-var SUPA_URL = 'https://jfvdfjzrcpintumymwwc.supabase.co';
-var SUPA_KEY = 'sb_publishable_SK85hNylfmSoztk8yyY2NA_PFs2MN60';
-var CLOUD = !!(SUPA_URL && SUPA_KEY && typeof window!=='undefined' && window.supabase);
-var sb = CLOUD ? window.supabase.createClient(SUPA_URL, SUPA_KEY) : null;
+var API_BASE = 'https://api-dm.lecomigo.tech';                 // back-end no VPS proprio (substitui o Supabase)
+var API_KEY  = 'aac469a17dcc71ac8bcca4e97a0e3a03';            // chave publica (gate leve de escrita)
+var CLOUD = !!(API_BASE && typeof window!=='undefined' && typeof window.fetch!=='undefined');
+function apiGet(path){ return window.fetch(API_BASE+path,{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; }); }
+function apiPut(path,body){ return window.fetch(API_BASE+path,{method:'PUT',headers:{'content-type':'application/json','x-api-key':API_KEY},body:JSON.stringify(body)}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; }); }
 // modo vitrine: abrir com ?preview=1 mostra o cardápio do código (seed) SEM tocar na nuvem nem no site real
 var PREVIEW = (typeof location!=='undefined') && /[?&]preview=1/.test((location.search||''));
 var PERMITIR_PEDIDO_SEMPRE = false; // trava de horário ATIVA (uso oficial): cliente só finaliza dentro do expediente.
@@ -250,8 +251,8 @@ function save(){ if(PREVIEW) return; try{ localStorage.setItem(LSKEY, JSON.strin
 function normWhats(t){ return String(t||'').replace(/\D/g,''); }
 function normNome(s){ return String(s||'').toLowerCase().trim().replace(/\s+/g,' ').normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function estaLogado(){ return !!(typeof UI!=='undefined' && UI.me && telValido(UI.me.tel) && (UI.me.nome||'').trim()); }
-function cloudCliGet(whats){ if(!sb) return Promise.resolve(null); return sb.from('clientes').select('*').eq('whats',whats).maybeSingle().then(function(r){ return (r&&r.data)?r.data:null; }).catch(function(){ return null; }); }
-function cloudCliUpsert(){ if(!sb) return; var w=normWhats(UI.me&&UI.me.tel); if(!w) return; sb.from('clientes').upsert({whats:w,nome:UI.me.nome||'',foto:UI.me.foto||null,enderecos:UI.me.enderecos||[],updated_at:new Date().toISOString()},{onConflict:'whats'}).then(function(r){ if(r&&r.error) console.warn('DM cli upsert:',r.error.message); }); }
+function cloudCliGet(whats){ if(!CLOUD) return Promise.resolve(null); return apiGet('/cliente/'+encodeURIComponent(whats)); }
+function cloudCliUpsert(){ if(!CLOUD) return; var w=normWhats(UI.me&&UI.me.tel); if(!w) return; apiPut('/cliente',{whats:w,nome:UI.me.nome||'',foto:UI.me.foto||null,enderecos:UI.me.enderecos||[]}); }
 function refreshCliente(){
   if(!CLOUD||!estaLogado()) return;
   cloudCliGet(normWhats(UI.me.tel)).then(function(cli){
@@ -2060,9 +2061,9 @@ function boot(){
    O polling (a cada 1.5s) garante o sync mesmo no PWA, onde o evento 'storage' não cruza a janela. */
 /* ---- nuvem (Supabase): estado compartilhado entre todos os aparelhos ---- */
 function cloudPush(){
-  if(!sb) return;
+  if(!CLOUD) return;
   lastRev = String(Date.now())+'-'+Math.floor(Math.random()*1e6);
-  sb.from('estado').upsert({id:1,data:S,rev:lastRev,updated_at:new Date().toISOString()}).then(function(r){ if(r&&r.error) console.warn('DM cloud push:', r.error.message); });
+  apiPut('/estado',{data:S,rev:lastRev});
 }
 function aplicarNuvem(row){
   if(!row||!row.rev||row.rev===lastRev) return false;
@@ -2072,24 +2073,24 @@ function aplicarNuvem(row){
   return true;
 }
 function cloudPull(){
-  if(!sb) return Promise.resolve();
+  if(!CLOUD) return Promise.resolve();
   // ECONOMIA DE BANDA: puxa só o 'rev' (poucos bytes). Só baixa o estado inteiro quando algo mudou.
-  return sb.from('estado').select('rev').eq('id',1).single().then(function(r){
-    var rev = r && r.data && r.data.rev;
-    if(!rev || rev===lastRev) return;   // nada mudou -> não baixa o estado (evita estourar a cota de egress)
-    return sb.from('estado').select('data,rev').eq('id',1).single().then(function(r2){ if(r2&&r2.data&&aplicarNuvem(r2.data)) render(); });
-  }).catch(function(){});
+  return apiGet('/estado/rev').then(function(r){
+    var rev = r && r.rev;
+    if(!rev || rev===lastRev) return;   // nada mudou -> não baixa o estado
+    return apiGet('/estado').then(function(r2){ if(r2&&r2.data&&aplicarNuvem(r2)) render(); });
+  });
 }
-function cloudSubscribe(){ if(!sb) return; try{ sb.channel('estado-rt').on('postgres_changes',{event:'*',schema:'public',table:'estado'}, function(){ cloudPull(); }).subscribe(); }catch(e){} }
+function cloudSubscribe(){ /* sem realtime no VPS; o poll de 5s cobre a sincronização */ }
 function cloudBoot(){
-  initUI(); seed(); load(); restaurarSessaoAdm_(); restoreChk(); render(); admOnReady_();   // pinta na hora com cache local; a nuvem sobrescreve em seguida
+  initUI(); seed(); load(); restaurarSessaoAdm_(); restoreChk(); render(); admOnReady_();   // pinta na hora com cache local; o VPS sobrescreve em seguida
   refreshCliente();   // puxa a conta/endereços do cliente logado (ou cria a linha se ainda não existir)
-  sb.from('estado').select('data,rev').eq('id',1).single().then(function(r){
-    if(r&&r.data&&r.data.data&&r.data.data.produtos){ if(aplicarNuvem(r.data)) render(); }
-    else { cloudPush(); }   // nuvem vazia -> sobe o cardápio atual
-  }).catch(function(e){ console.warn('DM cloud boot:', e&&e.message); });
+  apiGet('/estado').then(function(r){
+    if(r&&r.data&&r.data.produtos){ if(aplicarNuvem(r)) render(); }
+    else { cloudPush(); }   // banco vazio -> sobe o cardápio atual
+  });
   cloudSubscribe();
-  setInterval(cloudPull, 5000);   // reforço caso o tempo-real caia
+  setInterval(cloudPull, 5000);   // sincroniza a cada 5s (puxa só o rev; baixa o estado só quando muda)
 }
 
 if(CLOUD && !PREVIEW){
