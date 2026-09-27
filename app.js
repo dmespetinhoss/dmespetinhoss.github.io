@@ -1506,7 +1506,9 @@ function admImpressao(){
       ? '<div class="card"><div class="dp-line"><span>Impressora Bluetooth</span><strong>'+(btpConectado()?'Conectada':'Desconectada')+'</strong></div>'+
         '<button class="btn '+(btpConectado()?'btn-outline':'btn-primary')+' btn-block" data-action="'+(btpConectado()?'adm-bt-disconnect':'adm-bt-connect')+'">'+ic('printer')+(btpConectado()?' Desconectar impressora':' Conectar impressora Bluetooth')+'</button>'+
         '<p class="muted" style="margin-top:8px">No Android (Chrome): toque em Conectar, escolha a <strong>KP-1025</strong> e pronto. Depois, "Aceitar e imprimir" já sai na hora, sem app.</p></div>'
-      : '<div class="notice info">'+ic('info')+'<div><strong>No iPhone:</strong> instale o app grátis <strong>Mobile Print Util</strong> e pareie a KP-1025 nele uma vez. Depois, ao tocar em "Aceitar e imprimir", o iPhone abre o app e o cupom sai em 58mm (2 a 3 toques). Deixe o app pareado no balcão.</div></div>')+
+      : (isIOS()
+        ? '<div class="notice info">'+ic('info')+'<div><strong>No iPhone:</strong> instale o app grátis <strong>Mobile Print Util</strong> e pareie a KP-1025 nele uma vez. Depois, ao tocar em "Aceitar e imprimir", o iPhone abre o app e o cupom sai em 58mm (2 a 3 toques). Deixe o app pareado no balcão.</div></div>'
+        : '<div class="notice warn">'+ic('warn')+'<div><strong>Este navegador não conecta impressora Bluetooth (é o Safari).</strong> Abra este painel no <strong>Google Chrome</strong> — no Android do balcão, ou no computador com a KP-1025 — que aí aparece o botão <strong>"Conectar impressora Bluetooth"</strong> e o cupom sai na impressora.</div></div>'))+
     '<div class="notice warn">'+ic('warn')+'<div>Como o celular não confirma se o papel saiu, todo pedido tem "Reimprimir cupom", e a 2ª via vem marcada como REIMPRESSÃO pra não duplicar produção.</div></div>';
 }
 function admRelatorios(){
