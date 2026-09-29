@@ -257,10 +257,11 @@ function cacheLeve_(s){
   try{ var c=JSON.parse(JSON.stringify(s)); (c.pedidos||[]).forEach(function(p){ if(p&&p.pay&&p.pay.comprovante) p.pay.comprovante='#'; }); (c.clientes||[]).forEach(function(cl){ if(cl&&cl.foto) cl.foto=''; }); return c; }catch(e){ return s; }
 }
 function save(){
-  if(PREVIEW) return;
+  if(PREVIEW) return Promise.resolve(true);
   try{ localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){}   // cache local best-effort: se estourar a cota, NÃO derruba o resto
   persistLocal();                                                                 // SACOLA + perfil do cliente (crítico: SEMPRE grava)
-  if(CLOUD) cloudPush(); else marcarRev();                                        // pedido pra nuvem (crítico: SEMPRE tenta)
+  if(CLOUD) return cloudPush();                                                   // devolve a promessa: dá pra ESPERAR o salvamento (ex.: antes de imprimir)
+  marcarRev(); return Promise.resolve(true);
 }
 
 /* ---- conta do cliente (login por WhatsApp, tabela 'clientes' no Supabase) ---- */
@@ -1904,8 +1905,10 @@ on('adm-aceitar',function(d){ var o=order(d.id);
   var okSt=(o&&o.pay&&o.pay.metodo==='pix'&&o.pay.viaWhats)?['aguardando_aceite','em_validacao','aguardando_comprovante']:['aguardando_aceite'];
   if(!guard(o,okSt))return;
   if(o.pay.metodo==='pix'&&o.pay.status!=='aprovado') o.pay.status='aprovado';   // aceitar o Pix pelo WhatsApp confirma o pagamento
-  o.status='em_preparo'; o.reimpressoes=0; addHist(o,'Aceitou e imprimiu o cupom'); audit('Aceitou '+o.id,o.id); save(); render(); imprimirCupom(o,false); toast('Pedido aceito. Foi para a cozinha.','ok'); });
-on('adm-reimprimir',function(d){ var o=order(d.id); if(!o)return; o.reimpressoes=(o.reimpressoes||0)+1; addHist(o,'Reimprimiu (via '+(o.reimpressoes+1)+')'); save(); imprimirCupom(o,true); });
+  o.status='em_preparo'; o.reimpressoes=0; addHist(o,'Aceitou e imprimiu o cupom'); audit('Aceitou '+o.id,o.id); render();
+  // salva na nuvem PRIMEIRO; só depois abre a impressão (o window.print no computador interrompia o envio e o aceite não persistia)
+  Promise.resolve(save()).then(function(ok){ if(ok===false) toast('Sem conexão: o aceite pode não ter salvo. Confira e tente de novo.','err'); else toast('Pedido aceito. Foi para a cozinha.','ok'); imprimirCupom(o,false); }); });
+on('adm-reimprimir',function(d){ var o=order(d.id); if(!o)return; o.reimpressoes=(o.reimpressoes||0)+1; addHist(o,'Reimprimiu (via '+(o.reimpressoes+1)+')'); Promise.resolve(save()).then(function(){ imprimirCupom(o,true); }); });
 on('adm-pronto',function(d){ var o=order(d.id); if(!guard(o,['em_preparo']))return; o.status='pronto'; addHist(o,'Marcou como pronto'); save(); toast('Pedido pronto','ok'); render(); });
 on('adm-saiu',function(d){ var o=order(d.id); if(!guard(o,['pronto']))return; if(o.tipo!=='delivery'){ toast('Retirada não sai para entrega','err'); return; } o.status='saiu'; addHist(o,'Saiu para entrega'); save(); toast('Saiu para entrega','ok'); render(); });
 on('adm-concluir',function(d){ var o=order(d.id); if(!guard(o,['pronto','saiu']))return;
@@ -2161,14 +2164,17 @@ function boot(){
    O polling (a cada 1.5s) garante o sync mesmo no PWA, onde o evento 'storage' não cruza a janela. */
 /* ---- nuvem (Supabase): estado compartilhado entre todos os aparelhos ---- */
 function cloudPush(){
-  if(!CLOUD) return;
+  if(!CLOUD) return Promise.resolve(true);
   var ts = Date.now();
   var rev = String(ts)+'-'+Math.floor(Math.random()*1e6);
   lastRev = rev; _lastPushTs = ts;
   _pushing++;
-  apiPut('/estado',{data:S,rev:rev}).then(function(res){ if(res&&res.rev) lastRev=res.rev; })
-    .catch(function(){})
-    .then(function(){ _pushing=Math.max(0,_pushing-1); });
+  var body={data:S,rev:rev};
+  return apiPut('/estado',body).then(function(res){
+    if(res&&res.rev){ lastRev=res.rev; return true; }
+    return apiPut('/estado',body).then(function(r2){ if(r2&&r2.rev){ lastRev=r2.rev; return true; } return false; });  // 1 retry se a rede falhar
+  }).catch(function(){ return false; })
+    .then(function(v){ _pushing=Math.max(0,_pushing-1); return v; });
 }
 function aplicarNuvem(row){
   if(!row||!row.rev||row.rev===lastRev) return false;
