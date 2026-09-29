@@ -245,7 +245,18 @@ function restoreChk(){
   }catch(e){}
 }
 function saveCliente(){ persistLocal(); if(CLOUD) cloudCliUpsert(); }   // salva perfil + carrinho do cliente (local + conta na nuvem)
-function save(){ if(PREVIEW) return; try{ localStorage.setItem(LSKEY, JSON.stringify(S)); persistLocal(); if(CLOUD) cloudPush(); else marcarRev(); }catch(e){} }
+// cache local ENXUTO: tira as imagens base64 (comprovantes/fotos) que incham o localStorage e podem estourar a cota do celular.
+// As imagens ficam na nuvem (VPS) e voltam no próximo cloudPull; o cache serve só pra pintar menu/loja na hora.
+function cacheLeve_(s){
+  if(!CLOUD) return s;   // modo local sem nuvem: mantém tudo (não há de onde re-baixar)
+  try{ var c=JSON.parse(JSON.stringify(s)); (c.pedidos||[]).forEach(function(p){ if(p&&p.pay&&p.pay.comprovante) p.pay.comprovante='#'; }); (c.clientes||[]).forEach(function(cl){ if(cl&&cl.foto) cl.foto=''; }); return c; }catch(e){ return s; }
+}
+function save(){
+  if(PREVIEW) return;
+  try{ localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){}   // cache local best-effort: se estourar a cota, NÃO derruba o resto
+  persistLocal();                                                                 // SACOLA + perfil do cliente (crítico: SEMPRE grava)
+  if(CLOUD) cloudPush(); else marcarRev();                                        // pedido pra nuvem (crítico: SEMPRE tenta)
+}
 
 /* ---- conta do cliente (login por WhatsApp, tabela 'clientes' no Supabase) ---- */
 function normWhats(t){ return String(t||'').replace(/\D/g,''); }
