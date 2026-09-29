@@ -331,10 +331,14 @@ function agoraMinLoja(){
     var p=s.split(':'); return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0);
   }catch(e){ var d=new Date(); return d.getHours()*60+d.getMinutes(); }
 }
+var DIAS_FECHADOS = ['2026-10-05'];   // dias fechados PONTUAIS (ISO, fuso Belém). Denis vai fechar nesta segunda-feira 05/10/2026.
+function hojeISO_(){ try{ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Belem',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); }catch(e){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); } }
+function fechadoHoje_(){ var d=hojeISO_(); var extra=(S.loja&&S.loja.fechadoDias)||[]; return DIAS_FECHADOS.indexOf(d)>=0 || extra.indexOf(d)>=0; }
 function lojaAberta(){
   if(PERMITIR_PEDIDO_SEMPRE && (typeof APP_MODE==='undefined' || APP_MODE!=='admin')) return true; // teste: cliente sempre pode pedir
   var l=S.loja||{};
   if(l.pausado) return false;
+  if(fechadoHoje_()) return false;   // dia fechado pontual (feriado/folga) -> igual fora do horário: não finaliza pedido
   var m=agoraMinLoja(), js=janelasLoja();
   for(var i=0;i<js.length;i++){ var a=hm(js[i][0]), b=hm(js[i][1]);
     if(a<=b){ if(m>=a&&m<b) return true; } else { if(m>=a||m<b) return true; } }
