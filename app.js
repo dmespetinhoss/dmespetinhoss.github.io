@@ -22,6 +22,8 @@ var API_KEY  = 'aac469a17dcc71ac8bcca4e97a0e3a03';            // chave publica (
 var CLOUD = !!(API_BASE && typeof window!=='undefined' && typeof window.fetch!=='undefined');
 function apiGet(path){ return window.fetch(API_BASE+path,{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; }); }
 function apiPut(path,body){ return window.fetch(API_BASE+path,{method:'PUT',headers:{'content-type':'application/json','x-api-key':API_KEY},body:JSON.stringify(body)}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; }); }
+function apiPost(path,body){ return window.fetch(API_BASE+path,{method:'POST',headers:{'content-type':'application/json','x-api-key':API_KEY},body:JSON.stringify(body)}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; }); }
+var PIX_AUTO = CLOUD;   // PIX automático (Mercado Pago) só quando conectado ao servidor; offline/preview cai no manual
 // modo vitrine: abrir com ?preview=1 mostra o cardápio do código (seed) SEM tocar na nuvem nem no site real
 var PREVIEW = (typeof location!=='undefined') && /[?&]preview=1/.test((location.search||''));
 var PERMITIR_PEDIDO_SEMPRE = false; // trava de horário ATIVA (uso oficial): cliente só finaliza dentro do expediente.
@@ -449,6 +451,7 @@ function viewCliente(){
   else if(s==='endereco') body=cliEndereco();
   else if(s==='dados') body=cliDados();
   else if(s==='pagamento') body=cliPagamento();
+  else if(s==='pixpg') body=cliPixPagamento();
   else if(s==='confirmado') body=cliConfirmado();
   else if(s==='track') body=cliTrack();
   else if(s==='pedidos') body=cliPedidos();
@@ -678,12 +681,15 @@ function resumoValores(){
 function cliPagamento(){
   var c=UI.chk;
   var h=backCli('dados')+'<div class="pagehead"><h2>Pagamento</h2><p>Escolha como pagar.</p></div>';
+  var pixAuto = PIX_AUTO && !c.pixManual;
   var opts=[];
-  if(S.loja.aceitaPix) opts.push(['pix','pix','Pix com comprovante','Pague pelo Pix e anexe o comprovante']);
+  if(S.loja.aceitaPix) opts.push(['pix','pix',(pixAuto?'Pix (pague na hora)':'Pix com comprovante'),(pixAuto?'Pague pelo Pix no app e o pedido entra na hora':'Pague pelo Pix e anexe o comprovante')]);
   if(S.loja.aceitaDinheiro) opts.push(['dinheiro','cash','Dinheiro',(c.modo==='delivery'?'Na entrega':'Na retirada')]);
   if(S.loja.aceitaCartao) opts.push(['cartao','card','Cartão',(c.modo==='delivery'?'Maquininha na entrega':'Maquininha na retirada')]);
   h+=opts.map(function(o){ return '<div class="pay'+(c.pay===o[0]?' sel':'')+'" data-action="chk-pay" data-p="'+o[0]+'"><div class="pic">'+ic(o[1])+'</div><div><div class="pt">'+o[2]+'</div><div class="ps">'+o[3]+'</div></div></div>'; }).join('');
-  if(c.pay==='pix'){
+  if(c.pay==='pix' && pixAuto){
+    h+='<div class="notice info left">'+ic('pix')+'<div><strong>Pix na hora, igual iFood.</strong> Ao tocar no botão abaixo, o app mostra o QR Code e o código Pix. Assim que você pagar, o pedido <strong>entra automático</strong> no restaurante. Sem enviar comprovante, sem WhatsApp.</div></div>';
+  } else if(c.pay==='pix'){
     var pix=pixAtual(), qimg=qrDataUrl(pix.code);
     h+='<div class="pixbox">'+
       '<div class="pix-cap">Pague <strong>'+money(pix.valor)+'</strong> com Pix</div>'+
@@ -702,7 +708,7 @@ function cliPagamento(){
     h+='<div class="notice info">'+ic('card')+'<div>A maquininha vai '+(c.modo==='delivery'?'com o entregador':'estar no balcão')+'. Crédito ou débito. O sistema não guarda dados do cartão.</div></div>';
   }
   h+=resumoValores();
-  var label = c.pay==='pix'?'Enviar pedido para validação':'Confirmar pedido';
+  var label = (c.pay==='pix'&&pixAuto)?'Gerar Pix e pagar':(c.pay==='pix'?'Enviar pedido para validação':'Confirmar pedido');
   h+='<div class="sticky-cta"><button class="btn btn-primary btn-block btn-lg" data-action="chk-finalizar"'+(c.pay?'':' disabled')+'>'+label+'</button></div>';
   return h;
 }
@@ -1681,14 +1687,90 @@ on('chk-copiapix',function(){ var code=pixAtual().code; try{ navigator.clipboard
 on('chk-upload',function(){ pickImage(function(u){ UI.chk.comprov=u; render(); toast('Comprovante anexado','ok'); }); });
 on('chk-finalizar',function(){
   var c=UI.chk;
+  var pixAuto = PIX_AUTO && c.pay==='pix' && !c.pixManual;
   if(!lojaAberta()){ toast('Infelizmente estamos fechado no momento','err'); return; }
   if(!c.pay){ toast('Escolha a forma de pagamento','err'); return; }
-  if(c.pay==='pix' && !c.comprov){ toast('Anexe o comprovante do Pix','err'); return; }
+  if(c.pay==='pix' && !pixAuto && !c.comprov){ toast('Anexe o comprovante do Pix','err'); return; }
   var av=revalidarCarrinho();
   if(av.length){ toast(av[0]+'. Confira a sacola.','err'); UI.cli.screen='carrinho'; render(); return; }
   if(c.modo==='delivery' && c.bairro!=='__outro'){ var b=bairro(c.bairro); if(b&&b.min>0&&cartSubtotal()<b.min){ toast('Pedido mínimo de '+money(b.min)+' para '+c.bairro,'err'); return; } }
+  if(pixAuto){ iniciarPixAuto(); return; }
   criarPedido();
 });
+/* ---- PIX AUTOMÁTICO (Mercado Pago): paga no app, pedido entra sozinho (igual iFood) ---- */
+function montarPedidoPayload_(){
+  var c=UI.chk, sub=cartSubtotal(), taxa=c.modo==='delivery'?(S.loja.taxaEntrega||0):0, desc=descontoValor(sub);
+  var endComp = c.modo==='delivery' ? ((c.rua||'')+', '+(c.numero||'')) : '';
+  return { tel:c.whats, nome:c.nome, tipo:c.modo,
+    bairro:c.modo==='delivery'?c.bairro:'', end:endComp, comp:c.comp||'', ref:c.ref||'', entregaSobConsulta:false,
+    itens:JSON.parse(JSON.stringify(UI.cart)), subtotal:sub, taxa:taxa, desconto:desc, cupom:(UI.cupom?UI.cupom.code:''), total:sub-desc+taxa, obs:c.obs||'',
+    pay:{ metodo:'pix', label:'Pix (pago no app)', troco:'' },
+    criadoEm:nowHM(), dia:hoje(), ts:Date.now(), reimpressoes:0 };
+}
+function iniciarPixAuto(){
+  var c=UI.chk;
+  var ped=montarPedidoPayload_();
+  // salva a conta/endereço do cliente já agora (independe do pagamento)
+  UI.me.nome=c.nome; UI.me.tel=c.whats;
+  if(c.modo==='delivery'&&c.rua){ var ex=(UI.me.enderecos||[]).filter(function(e){return e.rua===c.rua&&e.numero===c.numero;})[0]; if(!ex) UI.me.enderecos.unshift({bairro:c.bairro,rua:c.rua,numero:c.numero,comp:c.comp,ref:c.ref,end:ped.end}); }
+  upsertCliente(c.whats,c.nome,c.modo==='delivery'?{end:ped.end,bairro:c.bairro,rua:c.rua,numero:c.numero,comp:c.comp,ref:c.ref}:null);
+  if(CLOUD) cloudCliUpsert();
+  persistLocal();
+  UI.pix={ status:'criando', valor:ped.total, mp_id:null, copia:'', qr:'' };
+  UI.cli.screen='pixpg'; render();
+  apiPost('/pix/criar',{ valor:ped.total, pedido:ped }).then(function(r){
+    if(!r || !r.ok || !r.mp_id){
+      UI.pix=null; c.pixManual=true; UI.cli.screen='pagamento'; render();
+      toast('Não consegui gerar o Pix automático agora. Use o Pix com comprovante abaixo.','err');
+      return;
+    }
+    UI.pix={ status:'aguardando', mp_id:r.mp_id, copia:r.copia_e_cola||'', qr:(r.qr_base64?('data:image/png;base64,'+r.qr_base64):''), valor:r.valor||ped.total, expira:r.expira, t0:Date.now() };
+    render(); pixPollStart();
+  });
+}
+function pixPollStop(){ if(UI._pixTimer){ clearInterval(UI._pixTimer); UI._pixTimer=null; } }
+function pixPollStart(){ pixPollStop(); UI._pixTimer=setInterval(pixPoll,3500); }
+function pixPoll(){
+  if(!UI.pix || !UI.pix.mp_id || UI.cli.screen!=='pixpg'){ pixPollStop(); return; }
+  var id=UI.pix.mp_id;
+  apiGet('/pix/status/'+encodeURIComponent(id)).then(function(r){
+    if(!r || !UI.pix || UI.pix.mp_id!==id) return;
+    if(r.status==='approved'){
+      pixPollStop();
+      var pid=r.pedido_id;
+      UI.cart=[]; UI.cupom=null;
+      UI.chk={modo:null,bairro:'',rua:'',numero:'',comp:'',ref:'',nome:UI.me.nome,whats:UI.me.tel,pay:null,troco:'',comprov:null,obs:''};
+      try{ localStorage.removeItem(CHKKEY); }catch(e){}
+      UI.pix=null; persistLocal();
+      lastRev=null;   // força baixar o estado novo (com o pedido já inserido pelo servidor)
+      cloudPull().then(function(){ if(pid) UI.curOrder=pid; UI.cli.screen=pid?'track':'pedidos'; render(); });
+      toast('Pagamento confirmado! Pedido enviado ao restaurante.','ok');
+      return;
+    }
+    if(r.status==='rejected'||r.status==='cancelled'){ pixPollStop(); UI.pix.status='falhou'; render(); toast('O pagamento não foi concluído. Gere um novo Pix.','err'); }
+  });
+}
+function cliPixPagamento(){
+  var p=UI.pix;
+  var h=backCli('pagamento')+'<div class="pagehead"><h2>Pagamento Pix</h2></div>';
+  if(!p || p.status==='criando'){ return h+'<div class="pixbox"><div class="pix-cap">Gerando o código Pix...</div><div class="notice info left">'+ic('clock')+'<div>Um instante.</div></div></div>'; }
+  if(p.status==='falhou'){
+    return h+'<div class="notice warn left">'+ic('warn')+'<div>O pagamento não foi concluído (cancelado ou expirado).</div></div>'+
+      '<div class="sticky-cta"><button class="btn btn-primary btn-block btn-lg" data-action="pix-novo">Voltar e gerar novo Pix</button></div>';
+  }
+  h+='<div class="pixbox">'+
+     '<div class="pix-cap">Pague <strong>'+money(p.valor)+'</strong> com Pix</div>'+
+     (p.qr?'<img class="pix-qr" src="'+p.qr+'" alt="QR Code Pix">':'<div class="notice info left">'+ic('info')+'<div>Use o código copia e cola abaixo.</div></div>')+
+     '<button class="btn btn-primary btn-sm btn-block" data-action="pix-copia">'+ic('copy')+' Copiar código Pix</button>'+
+     '<textarea class="pix-code" readonly onclick="this.select()" aria-label="Código Pix copia e cola">'+esc(p.copia)+'</textarea>'+
+     '<div class="notice info left" style="margin-top:10px">'+ic('clock')+'<div><strong>Aguardando seu pagamento...</strong> Assim que o Pix cair, seu pedido entra automático no restaurante. Pode deixar essa tela aberta.</div></div>'+
+     '</div>';
+  h+='<div class="sticky-cta"><button class="btn btn-ghost btn-block" data-action="pix-cancelar">Cancelar</button></div>';
+  return h;
+}
+on('pix-copia',function(){ var p=UI.pix; if(!p)return; try{ navigator.clipboard.writeText(p.copia).then(function(){ toast('Código Pix copiado','ok'); },function(){ toast('Toque no código e segure para copiar','info'); }); }catch(e){ toast('Toque no código e segure para copiar','info'); } });
+on('pix-cancelar',function(){ pixPollStop(); UI.pix=null; UI.cli.screen='pagamento'; render(); });
+on('pix-novo',function(){ pixPollStop(); UI.pix=null; UI.chk.pixManual=false; UI.cli.screen='pagamento'; render(); });
 // Pix sem conseguir anexar: cria o pedido do mesmo jeito (cai no painel "em validação") e abre o WhatsApp pra mandar o comprovante
 // PASSO 1: só abre o WhatsApp (NÃO cria o pedido) e destrava o botão "já enviei"
 on('chk-pix-whats-abrir',function(){
@@ -2026,7 +2108,7 @@ function initUI(){
   UI={ app:APP_MODE, cli:{screen:'home',cat:'Todos',q:''},
     chk:{modo:null,bairro:'',rua:'',numero:'',comp:'',ref:'',nome:'',whats:'',pay:null,troco:'',comprov:null,obs:''}, cupom:null,
     cart:[], login:null, me:{nome:'',tel:'',foto:null,enderecos:[]},
-    curOrder:null, _pdId:null,
+    curOrder:null, _pdId:null, pix:null,
     adm:{logged:false,user:null,tab:'visao',filter:'todos',filterTipo:'todos',filterPay:'todos',filterDia:'hoje',order:null,mais:null,relPer:'tudo',cliQ:'',cliFilter:'todos',_pedit:null} };
 }
 /* ---- Sessão do painel do DONO: fica salva 24h no aparelho pra a Fábia não deslogar toda hora ---- */
