@@ -12,6 +12,9 @@ var CARTKEY = 'dm_delivery_cart';        // carrinho do cliente (local, sobreviv
 var ADMKEY = 'dm_delivery_adm';          // sessão do painel do dono (fica 24h no aparelho pra não deslogar toda hora)
 var CHKKEY = 'dm_delivery_chk';          // estado do checkout (retomar na mesma tela se o app recarregar ao voltar do WhatsApp)
 var lastRev = null;
+var _pushing = 0;        // nº de envios (PUT /estado) em andamento: enquanto >0, não puxo/sobrescrevo meu estado
+var _lastPushTs = 0;     // timestamp do meu último envio: por alguns segundos, ignoro estados mais VELHOS que ele (evita apagar pedido recém-criado)
+function revTs_(rev){ var m=/^(\d+)/.exec(String(rev||'')); return m?parseInt(m[1],10):0; }
 var bc = null; try{ if(typeof BroadcastChannel!=='undefined') bc = new BroadcastChannel('dm_delivery'); }catch(e){ bc=null; }
 /* ===== Sincronização na nuvem (Supabase) — cross-device (celular <-> computador) ===== */
 var API_BASE = 'https://api-dm.lecomigo.tech';                 // back-end no VPS proprio (substitui o Supabase)
@@ -2073,23 +2076,33 @@ function boot(){
 /* ---- nuvem (Supabase): estado compartilhado entre todos os aparelhos ---- */
 function cloudPush(){
   if(!CLOUD) return;
-  lastRev = String(Date.now())+'-'+Math.floor(Math.random()*1e6);
-  apiPut('/estado',{data:S,rev:lastRev});
+  var ts = Date.now();
+  var rev = String(ts)+'-'+Math.floor(Math.random()*1e6);
+  lastRev = rev; _lastPushTs = ts;
+  _pushing++;
+  apiPut('/estado',{data:S,rev:rev}).then(function(res){ if(res&&res.rev) lastRev=res.rev; })
+    .catch(function(){})
+    .then(function(){ _pushing=Math.max(0,_pushing-1); });
 }
 function aplicarNuvem(row){
   if(!row||!row.rev||row.rev===lastRev) return false;
   if(!row.data||!row.data.produtos) return false;
+  // proteção anti-corrida: por até 6s após o meu envio, não aceito um estado mais VELHO que ele
+  // (senão um pull que leu o rev antigo, antes do meu PUT gravar, apagaria o pedido recém-criado)
+  if(_lastPushTs && (Date.now()-_lastPushTs)<6000 && revTs_(row.rev)<_lastPushTs) return false;
   lastRev=row.rev; S=row.data; if(!S.promos)S.promos=[];
   var maxN=100; S.pedidos.forEach(function(p){ var n=parseInt(String(p.id).replace('#',''),10); if(n>maxN)maxN=n; }); if(maxN>seedCounter)seedCounter=maxN;
   return true;
 }
 function cloudPull(){
   if(!CLOUD) return Promise.resolve();
+  if(_pushing>0) return Promise.resolve();   // não puxo enquanto estou gravando o MEU estado (evita sobrescrever o pedido recém-criado)
   // ECONOMIA DE BANDA: puxa só o 'rev' (poucos bytes). Só baixa o estado inteiro quando algo mudou.
   return apiGet('/estado/rev').then(function(r){
+    if(_pushing>0) return;                    // um envio começou durante a checagem -> aborta antes de sobrescrever
     var rev = r && r.rev;
     if(!rev || rev===lastRev) return;   // nada mudou -> não baixa o estado
-    return apiGet('/estado').then(function(r2){ if(r2&&r2.data&&aplicarNuvem(r2)) render(); });
+    return apiGet('/estado').then(function(r2){ if(_pushing>0) return; if(r2&&r2.data&&aplicarNuvem(r2)) render(); });
   });
 }
 function cloudSubscribe(){ /* sem realtime no VPS; o poll de 5s cobre a sincronização */ }
