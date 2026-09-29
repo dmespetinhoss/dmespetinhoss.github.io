@@ -2206,7 +2206,9 @@ function cloudBoot(){
   refreshCliente();   // puxa a conta/endereços do cliente logado (ou cria a linha se ainda não existir)
   apiGet('/estado').then(function(r){
     if(r&&r.data&&r.data.produtos){ if(aplicarNuvem(r)) render(); }
-    else { cloudPush(); }   // banco vazio -> sobe o cardápio atual
+    else if(r && r.data===null && (r.rev===null||r.rev===undefined)){ cloudPush(); }  // banco GENUINAMENTE vazio (1ª vez) -> sobe o cardápio
+    // se r===null (falha de rede/servidor) NÃO faz nada: mantém o cache e o próximo cloudPull recupera.
+    // NUNCA subir o seed por cima da produção só porque a leitura falhou (foi o que zerou tudo em 29/09).
   });
   cloudSubscribe();
   setInterval(cloudPull, 5000);   // sincroniza a cada 5s (puxa só o rev; baixa o estado só quando muda)
