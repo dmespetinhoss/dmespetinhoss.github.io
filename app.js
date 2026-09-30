@@ -34,6 +34,7 @@ var uid = function(p){ return (p||'id') + Math.random().toString(36).slice(2,8);
 function nowHM(){ var d=new Date(); return (''+d.getHours()).padStart(2,'0')+':'+(''+d.getMinutes()).padStart(2,'0'); }
 function hoje(){ var d=new Date(); return d.toLocaleDateString('pt-BR'); }
 function maskTel(t){ t=String(t||''); if(t.length<8) return t; return t.slice(0,-4).replace(/\d/g,'•')+t.slice(-4); }
+function telDig(t){ var d=String(t||'').replace(/\D/g,''); if(d.length>11) d=d.slice(-11); return d; }   // compara telefone só pelos dígitos (ignora (), -, espaço, +55)
 
 /* ============================ ÍCONES (SVG, sem emoji) ============================ */
 var IC={
@@ -810,7 +811,8 @@ function resumoPedidoBox(o){
 
 /* meus pedidos */
 function cliPedidos(){
-  var meus=S.pedidos.filter(function(p){return p.tel===(UI.me.tel||'');});
+  var meDig=telDig(UI.me.tel);
+  var meus=meDig ? S.pedidos.filter(function(p){return telDig(p.tel)===meDig;}) : [];
   if(!meus.length) return '<div class="pagehead"><h2>Meus pedidos</h2></div><div class="empty">'+ic('receipt','big')+'Você ainda não fez pedidos.<br><button class="btn btn-outline btn-sm" style="margin-top:14px" data-action="cli-go" data-s="home">Ver cardápio</button></div>';
   var ativos=meus.filter(function(p){return ['concluido','recusado','cancelado'].indexOf(p.status)<0;});
   var hist=meus.filter(function(p){return ['concluido','recusado','cancelado'].indexOf(p.status)>=0;});
