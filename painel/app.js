@@ -2220,7 +2220,15 @@ function aplicarNuvem(row){
   // proteção anti-corrida: por até 6s após o meu envio, não aceito um estado mais VELHO que ele
   // (senão um pull que leu o rev antigo, antes do meu PUT gravar, apagaria o pedido recém-criado)
   if(_lastPushTs && (Date.now()-_lastPushTs)<6000 && revTs_(row.rev)<_lastPushTs) return false;
-  lastRev=row.rev; S=row.data; if(!S.promos)S.promos=[];
+  lastRev=row.rev; S=row.data;
+  // blindagem: a nuvem substitui o S inteiro; se faltar algum campo, cai no default (senão quebra login/render)
+  if(!S.promos)S.promos=[];
+  if(!Array.isArray(S.pedidos))S.pedidos=[];
+  if(!Array.isArray(S.clientes))S.clientes=[];
+  if(!Array.isArray(S.bairros))S.bairros=[];
+  if(!Array.isArray(S.categorias))S.categorias=[];
+  if(!S.loja)S.loja={};
+  if(!Array.isArray(S.equipe)||!S.equipe.length)S.equipe=[{user:'denis',nome:'Dênis',papel:'admin'},{user:'atendente',nome:'Atendente',papel:'atendente'}];   // logins do admin nunca somem
   var maxN=100; S.pedidos.forEach(function(p){ var n=parseInt(String(p.id).replace('#',''),10); if(n>maxN)maxN=n; }); if(maxN>seedCounter)seedCounter=maxN;
   return true;
 }
