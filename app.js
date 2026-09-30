@@ -257,13 +257,16 @@ function cacheLeve_(s){
   if(!CLOUD) return s;   // modo local sem nuvem: mantém tudo (não há de onde re-baixar)
   try{ var c=JSON.parse(JSON.stringify(s)); (c.pedidos||[]).forEach(function(p){ if(p&&p.pay&&p.pay.comprovante) p.pay.comprovante='#'; }); (c.clientes||[]).forEach(function(cl){ if(cl&&cl.foto) cl.foto=''; }); return c; }catch(e){ return s; }
 }
-function save(){
+function save(cfg){
   if(PREVIEW) return Promise.resolve(true);
   try{ localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){}   // cache local best-effort: se estourar a cota, NÃO derruba o resto
   persistLocal();                                                                 // SACOLA + perfil do cliente (crítico: SEMPRE grava)
-  if(CLOUD) return cloudPush();                                                   // devolve a promessa: dá pra ESPERAR o salvamento (ex.: antes de imprimir)
+  if(CLOUD) return cloudPush(cfg);                                                // devolve a promessa: dá pra ESPERAR o salvamento (ex.: antes de imprimir)
   marcarRev(); return Promise.resolve(true);
 }
+// saveCfg = salva uma mudança de CARDÁPIO/LOJA (produtos, categorias, promoções, horário, pix, marca).
+// Sem isso, o servidor preserva a config e um push de pedido de outro aparelho reverteria a mudança.
+function saveCfg(){ return save(true); }
 
 /* ---- conta do cliente (login por WhatsApp, tabela 'clientes' no Supabase) ---- */
 function normWhats(t){ return String(t||'').replace(/\D/g,''); }
@@ -2009,7 +2012,7 @@ function pedirMotivo(titulo,ops,cb){
 /* cardápio */
 on('adm-novo-produto',function(){ if(!needAdmin())return; openProdForm(null); });
 on('adm-edit-produto',function(d){ if(!needAdmin())return; openProdForm(prod(d.id)); });
-on('adm-toggle-disp',function(d){ var p=prod(d.id); p.disp=(p.disp==='disponivel')?'esgotado':'disponivel'; audit((p.disp==='esgotado'?'Esgotou ':'Reativou ')+p.nome,''); save(); toast(p.nome+' · '+(p.disp==='disponivel'?'disponível':'esgotado'),'info'); render(); });
+on('adm-toggle-disp',function(d){ var p=prod(d.id); p.disp=(p.disp==='disponivel')?'esgotado':'disponivel'; audit((p.disp==='esgotado'?'Esgotou ':'Reativou ')+p.nome,''); saveCfg(); toast(p.nome+' · '+(p.disp==='disponivel'?'disponível':'esgotado'),'info'); render(); });
 function openProdForm(p){
   UI.adm._pedit = p ? JSON.parse(JSON.stringify(p)) : {nome:'',desc:'',preco:'',cat:S.categorias[0].id,hue:20,disp:'disponivel',foto:null,ordem:S.produtos.length,variacoes:[],grupos:[]};
   if(!UI.adm._pedit.variacoes) UI.adm._pedit.variacoes=[];
@@ -2065,10 +2068,10 @@ on('pf-save',function(){
   e.preco=parseFloat(String(e.preco).replace(',','.'))||0;
   if(e._id){ var p=prod(e._id); ['nome','desc','preco','cat','disp','foto','ordem','variacoes','grupos'].forEach(function(k){p[k]=e[k];}); audit('Editou '+e.nome,''); }
   else { S.produtos.push({id:uid('p'),nome:e.nome,desc:e.desc,preco:e.preco,cat:e.cat,disp:e.disp,foto:e.foto,hue:20,ordem:e.ordem||S.produtos.length,variacoes:e.variacoes||[],grupos:e.grupos||[]}); audit('Criou '+e.nome,''); }
-  save(); closeModal(); toast('Produto salvo','ok'); render();
+  saveCfg(); closeModal(); toast('Produto salvo','ok'); render();
 });
-on('pf-dup',function(){ var e=UI.adm._pedit; if(!e._id)return; var p=prod(e._id); var c=JSON.parse(JSON.stringify(p)); c.id=uid('p'); c.nome=p.nome+' (cópia)'; S.produtos.push(c); save(); closeModal(); toast('Produto duplicado','ok'); render(); });
-on('pf-arquivar',function(){ var e=UI.adm._pedit; if(!e._id)return; var p=prod(e._id); confirmar('Arquivar produto?','"'+p.nome+'" some do cardápio (histórico é preservado).','Arquivar',function(){ p.disp='oculto'; audit('Arquivou '+p.nome,''); save(); closeModal(); toast('Produto arquivado','info'); render(); },true); });
+on('pf-dup',function(){ var e=UI.adm._pedit; if(!e._id)return; var p=prod(e._id); var c=JSON.parse(JSON.stringify(p)); c.id=uid('p'); c.nome=p.nome+' (cópia)'; S.produtos.push(c); saveCfg(); closeModal(); toast('Produto duplicado','ok'); render(); });
+on('pf-arquivar',function(){ var e=UI.adm._pedit; if(!e._id)return; var p=prod(e._id); confirmar('Arquivar produto?','"'+p.nome+'" some do cardápio (histórico é preservado).','Arquivar',function(){ p.disp='oculto'; audit('Arquivou '+p.nome,''); saveCfg(); closeModal(); toast('Produto arquivado','info'); render(); },true); });
 /* promoções */
 on('adm-promo-novo',function(){ if(!needAdmin())return; modal(promoForm(null)); });
 on('adm-promo-edit',function(d){ if(!needAdmin())return; var p=(S.promos||[]).filter(function(x){return x.id===d.id;})[0]; modal(promoForm(p)); });
@@ -2077,29 +2080,29 @@ on('adm-promo-save',function(d){
   var desc=$('pr-d').value.trim(), preco=parseFloat(String($('pr-p').value).replace(',','.'))||0;
   if(d.id){ var p=(S.promos||[]).filter(function(x){return x.id===d.id;})[0]; p.titulo=t; p.desc=desc; p.preco=preco; }
   else { S.promos.push({id:uid('promo'),titulo:t,desc:desc,preco:preco,ativo:true}); }
-  audit('Salvou promoção '+t,''); save(); closeModal(); render(); toast('Promoção salva','ok');
+  audit('Salvou promoção '+t,''); saveCfg(); closeModal(); render(); toast('Promoção salva','ok');
 });
-on('adm-promo-toggle',function(d){ var p=(S.promos||[]).filter(function(x){return x.id===d.id;})[0]; if(p){ p.ativo=!p.ativo; save(); render(); } });
-on('adm-promo-rm',function(d){ confirmar('Remover promoção?','','Remover',function(){ S.promos=S.promos.filter(function(x){return x.id!==d.id;}); save(); closeModal(); render(); toast('Promoção removida','info'); },true); });
+on('adm-promo-toggle',function(d){ var p=(S.promos||[]).filter(function(x){return x.id===d.id;})[0]; if(p){ p.ativo=!p.ativo; saveCfg(); render(); } });
+on('adm-promo-rm',function(d){ confirmar('Remover promoção?','','Remover',function(){ S.promos=S.promos.filter(function(x){return x.id!==d.id;}); saveCfg(); closeModal(); render(); toast('Promoção removida','info'); },true); });
 /* categorias */
 on('cat-add',function(){ if(!needAdmin())return; modal('<h2>Nova categoria</h2><div class="field"><label>Nome</label><input id="ct-nome" placeholder="Ex.: Promoções"></div><div class="sticky-cta"><button class="btn btn-primary btn-block" data-action="cat-add-ok">Criar</button></div>',true); });
-on('cat-add-ok',function(){ var n=$('ct-nome').value.trim(); if(!n){ toast('Informe o nome','err'); return; } S.categorias.push({id:uid('cat'),nome:n,ordem:S.categorias.length+1,oculta:false}); save(); closeModal(); render(); toast('Categoria criada','ok'); });
+on('cat-add-ok',function(){ var n=$('ct-nome').value.trim(); if(!n){ toast('Informe o nome','err'); return; } S.categorias.push({id:uid('cat'),nome:n,ordem:S.categorias.length+1,oculta:false}); saveCfg(); closeModal(); render(); toast('Categoria criada','ok'); });
 on('cat-ren',function(d){ if(!needAdmin())return; var c=cat(d.id); modal('<h2>Renomear categoria</h2><div class="field"><label>Nome</label><input id="ct-nome" value="'+esc(c.nome)+'"></div><div class="sticky-cta"><button class="btn btn-primary btn-block" data-action="cat-ren-ok" data-id="'+d.id+'">Salvar</button></div>',true); });
-on('cat-ren-ok',function(d){ var c=cat(d.id); var n=$('ct-nome').value.trim(); if(!n){ toast('Informe o nome','err'); return; } c.nome=n; save(); closeModal(); render(); toast('Categoria renomeada','ok'); });
+on('cat-ren-ok',function(d){ var c=cat(d.id); var n=$('ct-nome').value.trim(); if(!n){ toast('Informe o nome','err'); return; } c.nome=n; saveCfg(); closeModal(); render(); toast('Categoria renomeada','ok'); });
 on('cat-up',function(d){ moveCat(d.id,-1); });
 on('cat-down',function(d){ moveCat(d.id,1); });
-function moveCat(id,dir){ var cs=catsOrd(); var i=cs.findIndex(function(c){return c.id===id;}); var j=i+dir; if(j<0||j>=cs.length)return; var t=cs[i].ordem; cs[i].ordem=cs[j].ordem; cs[j].ordem=t; save(); render(); }
-on('cat-oculta',function(d){ var c=cat(d.id); c.oculta=!c.oculta; save(); render(); });
+function moveCat(id,dir){ var cs=catsOrd(); var i=cs.findIndex(function(c){return c.id===id;}); var j=i+dir; if(j<0||j>=cs.length)return; var t=cs[i].ordem; cs[i].ordem=cs[j].ordem; cs[j].ordem=t; saveCfg(); render(); }
+on('cat-oculta',function(d){ var c=cat(d.id); c.oculta=!c.oculta; saveCfg(); render(); });
 /* entregas/horários/pagamentos */
-on('adm-save-entregas',function(){ if(!needAdmin())return; S.loja.taxaEntrega=parseFloat(String($('ent-taxa').value).replace(',','.'))||0; S.loja.prazoEntrega=$('ent-prazo').value; save(); toast('Entregas salvas','ok'); });
+on('adm-save-entregas',function(){ if(!needAdmin())return; S.loja.taxaEntrega=parseFloat(String($('ent-taxa').value).replace(',','.'))||0; S.loja.prazoEntrega=$('ent-prazo').value; saveCfg(); toast('Entregas salvas','ok'); });
 on('adm-toggle-retirada',function(){ S.loja.retirada=!S.loja.retirada; render(); });
-on('adm-toggle-pausa',function(){ if(!needAdmin())return; S.loja.pausado=!S.loja.pausado; save(); toast(S.loja.pausado?'Loja pausada (fechada agora)':'Loja voltou ao horário automático', S.loja.pausado?'info':'ok'); render(); });
+on('adm-toggle-pausa',function(){ if(!needAdmin())return; S.loja.pausado=!S.loja.pausado; saveCfg(); toast(S.loja.pausado?'Loja pausada (fechada agora)':'Loja voltou ao horário automático', S.loja.pausado?'info':'ok'); render(); });
 function _janelasAtuais(){ var js=(S.loja.janelas&&S.loja.janelas.length)?S.loja.janelas:DEFAULT_JANELAS; return js.map(function(w){return [w[0],w[1]];}); }
 on('adm-jan-add',function(){ if(!needAdmin())return; var js=_janelasAtuais(); js.push(['18:00','23:00']); S.loja.janelas=js; render(); });
 on('adm-jan-rm',function(d){ if(!needAdmin())return; var js=_janelasAtuais(); js.splice(+d.i,1); S.loja.janelas=js; render(); });
-on('adm-save-horarios',function(){ if(!needAdmin())return; var js=[]; for(var i=0;;i++){ var a=$('jr-a'+i), b=$('jr-b'+i); if(!a||!b) break; if(a.value&&b.value) js.push([a.value,b.value]); } if(!js.length){ toast('Adicione pelo menos uma janela de horário','err'); return; } S.loja.janelas=js; S.loja.horario=fmtJanelas(js); save(); toast('Horários salvos','ok'); render(); });
+on('adm-save-horarios',function(){ if(!needAdmin())return; var js=[]; for(var i=0;;i++){ var a=$('jr-a'+i), b=$('jr-b'+i); if(!a||!b) break; if(a.value&&b.value) js.push([a.value,b.value]); } if(!js.length){ toast('Adicione pelo menos uma janela de horário','err'); return; } S.loja.janelas=js; S.loja.horario=fmtJanelas(js); saveCfg(); toast('Horários salvos','ok'); render(); });
 on('adm-toggle-pag',function(d){ S.loja[d.k]=!S.loja[d.k]; render(); });
-on('adm-save-pag',function(){ if(!needAdmin())return; S.loja.pixKey=$('pg-key').value; S.loja.pixNome=$('pg-nome').value; save(); toast('Pagamentos salvos','ok'); });
+on('adm-save-pag',function(){ if(!needAdmin())return; S.loja.pixKey=$('pg-key').value; S.loja.pixNome=$('pg-nome').value; saveCfg(); toast('Pagamentos salvos','ok'); });
 on('adm-test-print',function(){ var demo={id:'#TESTE',dia:hoje(),criadoEm:nowHM(),tipo:'delivery',nome:'Cliente Teste',tel:'(00) 00000-0000',end:'Rua de Teste, 1',bairro:'Centro',entregaSobConsulta:false,itens:[{qty:2,nome:'Espetinho de Carne',preco:8,adic:[],obs:'',opc:{}}],total:16,subtotal:16,pay:{label:'Pix',troco:''},obs:''}; imprimirCupom(demo,false); });
 on('adm-rel-per',function(d){ UI.adm.relPer=d.p; render(); });
 /* clientes */
@@ -2122,7 +2125,7 @@ on('adm-cli-bloq',function(d){ if(!needAdmin())return; var c=S.clientes.filter(f
   else pedirMotivo('Bloquear cliente',['Golpe/comprovante falso','Trote recorrente','Comportamento abusivo'],function(m){ c.bloq=true; c.obsInterna=m; audit('Bloqueou cliente '+c.nome+': '+m,''); save(); closeModal(); render(); toast('Cliente bloqueado','info'); }); });
 /* marca */
 on('adm-trocar-logo',function(){ pickImage(function(u){ var im=$('mk-logo'); if(im)im.src=u; toast('Logo atualizada (visual)','ok'); }); });
-on('adm-save-marca',function(){ if(!needAdmin())return; S.loja.nome=$('mk-nome').value; S.loja.banner=$('mk-banner').value; S.loja.endereco=$('mk-end').value; S.loja.whats=$('mk-whats').value; save(); toast('Marca salva','ok'); });
+on('adm-save-marca',function(){ if(!needAdmin())return; S.loja.nome=$('mk-nome').value; S.loja.banner=$('mk-banner').value; S.loja.endereco=$('mk-end').value; S.loja.whats=$('mk-whats').value; saveCfg(); toast('Marca salva','ok'); });
 
 /* ============================================================================
    UPLOAD DE IMAGEM
@@ -2198,13 +2201,13 @@ function boot(){
 /* Sincronização entre abas E apps instalados (PWA): storage + BroadcastChannel + polling + foco/visibilidade.
    O polling (a cada 1.5s) garante o sync mesmo no PWA, onde o evento 'storage' não cruza a janela. */
 /* ---- nuvem (Supabase): estado compartilhado entre todos os aparelhos ---- */
-function cloudPush(){
+function cloudPush(cfg){
   if(!CLOUD) return Promise.resolve(true);
   var ts = Date.now();
   var rev = String(ts)+'-'+Math.floor(Math.random()*1e6);
   lastRev = rev; _lastPushTs = ts;
   _pushing++;
-  var body={data:S,rev:rev};
+  var body={data:S,rev:rev}; if(cfg) body.cfg=true;   // cfg:true = push de cardápio/loja (senão o servidor preserva a config)
   return apiPut('/estado',body).then(function(res){
     if(res&&res.rev){ lastRev=res.rev; return true; }
     return apiPut('/estado',body).then(function(r2){ if(r2&&r2.rev){ lastRev=r2.rev; return true; } return false; });  // 1 retry se a rede falhar
