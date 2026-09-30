@@ -296,7 +296,9 @@ function syncCheck(){
 }
 function load(){
   var had=false;
-  if(!PREVIEW){ try{ var raw=localStorage.getItem(LSKEY); if(raw){ var s=JSON.parse(raw); if(s&&s.produtos){ S=s; if(!S.promos)S.promos=[]; had=true; } } }catch(e){} }
+  if(!PREVIEW){ try{ var raw=localStorage.getItem(LSKEY);
+    if(raw && raw.length>450000){ try{ localStorage.removeItem(LSKEY); }catch(_){ } raw=null; }  // cache local ANTIGO e gigante (com imagens) trava o celular -> descarta; a nuvem repovoa leve
+    if(raw){ var s=JSON.parse(raw); if(s&&s.produtos){ S=s; if(!S.promos)S.promos=[]; had=true; } } }catch(e){ try{ localStorage.removeItem(LSKEY); }catch(_){ } } }
   try{ var m=localStorage.getItem(MEKEY); if(m){ var mm=JSON.parse(m); if(mm&&typeof mm==='object') UI.me=mm; } }catch(e){}
   if(APP_MODE!=='admin'){ try{ var ck=localStorage.getItem(CARTKEY); if(ck){ var ct=JSON.parse(ck); if(Array.isArray(ct)) UI.cart=ct; } }catch(e){} }
   return had;
