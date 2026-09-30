@@ -461,6 +461,7 @@ function viewCliente(){
   else if(s==='dados') body=cliDados();
   else if(s==='pagamento') body=cliPagamento();
   else if(s==='pixpg') body=cliPixPagamento();
+  else if(s==='enviando') body=cliEnviando();
   else if(s==='confirmado') body=cliConfirmado();
   else if(s==='track') body=cliTrack();
   else if(s==='pedidos') body=cliPedidos();
@@ -1810,22 +1811,51 @@ function criarPedido(){
   var payMap={pix:'Pix com comprovante',dinheiro:'Dinheiro no local',cartao:'Cartão no local'};
   var status = c.pay==='pix' ? 'em_validacao' : 'aguardando_aceite';
   var endComp = c.modo==='delivery' ? ((c.rua||'')+', '+(c.numero||'')) : '';
-  var ped={ id:'#'+(++seedCounter), tel:c.whats, nome:c.nome, tipo:c.modo,
+  var ped={ tel:c.whats, nome:c.nome, tipo:c.modo,
     bairro:c.modo==='delivery'?c.bairro:'', end:endComp, comp:c.comp||'', ref:c.ref||'', entregaSobConsulta:false,
     itens:JSON.parse(JSON.stringify(UI.cart)), subtotal:sub, taxa:taxa, desconto:desc, cupom:(UI.cupom?UI.cupom.code:''), total:sub-desc+taxa, obs:c.obs||'',
     pay:{ metodo:c.pay, label:payMap[c.pay], status:c.pay==='pix'?'enviado':'pendente', comprovante:c.comprov||null, viaWhats:!!c.viaWhats, troco:c.troco||'' },
     status:status, criadoEm:nowHM(), dia:hoje(), ts:Date.now(),
-    historico:[{t:nowHM(),who:'Cliente',act:'Pedido criado'}], reimpressoes:0 };
-  S.pedidos.unshift(ped);
+    historico:[{t:nowHM(),who:'Cliente',act:'Pedido criado'}], reimpressoes:0, cid:uid('c') };
   UI.me.nome=c.nome; UI.me.tel=c.whats;
   if(c.modo==='delivery'&&c.rua){ var ex=(UI.me.enderecos||[]).filter(function(e){return e.rua===c.rua&&e.numero===c.numero;})[0]; if(!ex) UI.me.enderecos.unshift({bairro:c.bairro,rua:c.rua,numero:c.numero,comp:c.comp,ref:c.ref,end:endComp}); }
   upsertCliente(c.whats,c.nome,c.modo==='delivery'?{end:endComp,bairro:c.bairro,rua:c.rua,numero:c.numero,comp:c.comp,ref:c.ref}:null);
   if(CLOUD) cloudCliUpsert();   // sincroniza a conta/endereços do cliente na nuvem
+  persistLocal();
+  if(CLOUD){
+    // cria o pedido DIRETO no servidor (payload pequeno, id do servidor, com retry) -> não perde por falha de envio do estado inteiro
+    UI.cli.screen='enviando'; render();
+    criarPedidoCloud_(ped,0);
+    return ped;
+  }
+  // modo local (preview/sem nuvem): comportamento antigo
+  ped.id='#'+(++seedCounter); S.pedidos.unshift(ped);
   UI.curOrder=ped.id; UI.cart=[]; UI.cupom=null;
   UI.chk={modo:null,bairro:'',rua:'',numero:'',comp:'',ref:'',nome:c.nome,whats:c.whats,pay:null,troco:'',comprov:null,obs:''};
-  try{ localStorage.removeItem(CHKKEY); }catch(e){}   // checkout concluído: não retomar depois
+  try{ localStorage.removeItem(CHKKEY); }catch(e){}
   UI.cli.screen='confirmado'; save(); render();
   return ped;
+}
+function cliEnviando(){
+  return '<div class="pagehead"><h2>Enviando seu pedido...</h2></div>'+
+    '<div class="notice info left">'+ic('clock')+'<div>Só um instante, estamos registrando seu pedido no restaurante. Não feche o app.</div></div>';
+}
+function criarPedidoCloud_(ped,tent){
+  apiPost('/pedido',{pedido:ped}).then(function(r){
+    if(r&&r.ok&&r.id){
+      ped.id=r.id; if(!order(ped.id)) S.pedidos.unshift(ped);
+      UI.curOrder=r.id; UI.cart=[]; UI.cupom=null;
+      UI.chk={modo:null,bairro:'',rua:'',numero:'',comp:'',ref:'',nome:ped.nome,whats:ped.tel,pay:null,troco:'',comprov:null,obs:''};
+      try{ localStorage.removeItem(CHKKEY); }catch(e){}
+      persistLocal(); lastRev=null; cloudPull();
+      UI.cli.screen='confirmado'; render();
+      return;
+    }
+    if(tent<4){ setTimeout(function(){ criarPedidoCloud_(ped,tent+1); }, 1500); return; }
+    // falhou de vez: NÃO perde a sacola, volta pro pagamento e avisa
+    UI.cli.screen='pagamento'; render();
+    toast('Sem conexão. Seu pedido NÃO foi enviado - tente de novo em instantes.','err');
+  });
 }
 on('cli-track',function(d){ UI.curOrder=d.id; UI.cli.screen='track'; render(); });
 on('cli-repetir',function(d){
