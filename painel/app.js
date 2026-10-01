@@ -287,16 +287,20 @@ function pushCardapio(){
 function pullCardapio(){
   if(!CLOUD) return Promise.resolve();
   if(_pushing>0) return Promise.resolve();
+  var t0=Date.now();                         // marca o início: se um push começar no meio, este pull está velho
   return apiGet('/cardapio/rev').then(function(r){
+    if(_pushing>0 || _lastPushTs>t0) return; // alguém salvou enquanto eu checava -> não reverter
     var cr=r&&r.cardRev;
     if(cr==null || cr===_cardRev) return;   // cardápio não mudou -> não baixa
     return apiGet('/cardapio').then(function(c){
+      if(_pushing>0 || _lastPushTs>t0) return;   // idem: nunca sobrescrever uma mudança local recém-salva
       if(!c||!Array.isArray(c.produtos)||!c.produtos.length) return;
       _cardRev=c.cardRev;
       S.produtos=c.produtos;
       if(Array.isArray(c.categorias)&&c.categorias.length) S.categorias=c.categorias;
       if(c.loja&&c.loja.nome) S.loja=c.loja;
       if(Array.isArray(c.promos)) S.promos=c.promos;
+      garantirEstado_();
       try{ localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){}
       render();
     });
@@ -336,6 +340,7 @@ function load(){
     if(raw){ var s=JSON.parse(raw); if(s&&s.produtos){ S=s; if(!S.promos)S.promos=[]; had=true; } } }catch(e){ try{ localStorage.removeItem(LSKEY); }catch(_){ } } }
   try{ var m=localStorage.getItem(MEKEY); if(m){ var mm=JSON.parse(m); if(mm&&typeof mm==='object') UI.me=mm; } }catch(e){}
   if(APP_MODE!=='admin'){ try{ var ck=localStorage.getItem(CARTKEY); if(ck){ var ct=JSON.parse(ck); if(Array.isArray(ct)) UI.cart=ct; } }catch(e){} }
+  garantirEstado_();
   return had;
 }
 
@@ -346,7 +351,24 @@ function bairro(n){ for(var i=0;i<S.bairros.length;i++) if(S.bairros[i].nome===n
 function cat(id){ return S.categorias.filter(function(x){return x.id===id;})[0]; }
 function catNome(id){ var c=cat(id); return c?c.nome:id; }
 function catsOrd(){ return S.categorias.slice().sort(function(a,b){return a.ordem-b.ordem;}); }
-function audit(act,target){ S.audit.unshift({t:nowHM(),who:UI.adm.user?UI.adm.user.nome:'Sistema',act:act,target:target||''}); if(S.audit.length>60)S.audit.pop(); }
+// GARANTIA DE ESTADO: se qualquer campo faltar (nuvem incompleta, estado antigo), cai no default.
+// Sem isto, uma lista faltando (ex.: S.audit) estoura no meio de uma ação e ABORTA o resto dela
+// (foi o que quebrou o botão de esgotado: o audit estourava antes do save, então nada ia pro servidor).
+function garantirEstado_(){
+  try{
+    if(!S||typeof S!=='object') return;
+    ['audit','bairros','promos','pedidos','clientes','produtos','categorias','equipe'].forEach(function(k){ if(!Array.isArray(S[k])) S[k]=[]; });
+    if(!S.loja||typeof S.loja!=='object') S.loja={};
+    if(!S.equipe.length) S.equipe=[{user:'denis',nome:'Dênis',papel:'admin'},{user:'atendente',nome:'Atendente',papel:'atendente'}];
+  }catch(e){}
+}
+function audit(act,target){
+  try{
+    if(!Array.isArray(S.audit)) S.audit=[];
+    S.audit.unshift({t:nowHM(),who:(UI.adm&&UI.adm.user)?UI.adm.user.nome:'Sistema',act:act,target:target||''});
+    if(S.audit.length>60)S.audit.pop();
+  }catch(e){}   // auditoria NUNCA pode derrubar a ação do usuário
+}
 function upsertCliente(tel,nome,addr){
   var c=S.clientes.filter(function(x){return x.tel===tel;})[0];
   if(!c){ c={id:uid('c'),tel:tel,nome:nome,enderecos:[],criadoEm:hoje(),bloq:false,obsInterna:''}; S.clientes.push(c); }
@@ -2049,7 +2071,18 @@ function pedirMotivo(titulo,ops,cb){
 /* cardápio */
 on('adm-novo-produto',function(){ if(!needAdmin())return; openProdForm(null); });
 on('adm-edit-produto',function(d){ if(!needAdmin())return; openProdForm(prod(d.id)); });
-on('adm-toggle-disp',function(d){ var p=prod(d.id); p.disp=(p.disp==='disponivel')?'esgotado':'disponivel'; audit((p.disp==='esgotado'?'Esgotou ':'Reativou ')+p.nome,''); saveCfg(); toast(p.nome+' · '+(p.disp==='disponivel'?'disponível':'esgotado'),'info'); render(); });
+on('adm-toggle-disp',function(d){
+  var p=prod(d.id); if(!p){ toast('Produto não encontrado','err'); return; }
+  p.disp=(p.disp==='disponivel')?'esgotado':'disponivel';
+  var novo=p.disp, nome=p.nome;
+  render();                                                   // feedback IMEDIATO na tela (antes de qualquer coisa que possa falhar)
+  toast(nome+' · '+(novo==='disponivel'?'disponível':'esgotado'),'info');
+  audit((novo==='esgotado'?'Esgotou ':'Reativou ')+nome,'');  // auditoria é best-effort, não derruba a ação
+  Promise.resolve(saveCfg()).then(function(ok){
+    if(ok===false) toast('Sem conexão: a mudança NÃO foi salva. Tente de novo.','err');
+    render();                                                 // re-render ao confirmar (estado real)
+  });
+});
 function openProdForm(p){
   UI.adm._pedit = p ? JSON.parse(JSON.stringify(p)) : {nome:'',desc:'',preco:'',cat:S.categorias[0].id,hue:20,disp:'disponivel',foto:null,ordem:S.produtos.length,variacoes:[],grupos:[]};
   if(!UI.adm._pedit.variacoes) UI.adm._pedit.variacoes=[];
@@ -2266,6 +2299,7 @@ function aplicarNuvem(row){
   if(!Array.isArray(S.categorias))S.categorias=[];
   if(!S.loja)S.loja={};
   if(!Array.isArray(S.equipe)||!S.equipe.length)S.equipe=[{user:'denis',nome:'Dênis',papel:'admin'},{user:'atendente',nome:'Atendente',papel:'atendente'}];   // logins do admin nunca somem
+  garantirEstado_();
   var maxN=100; S.pedidos.forEach(function(p){ var n=parseInt(String(p.id).replace('#',''),10); if(n>maxN)maxN=n; }); if(maxN>seedCounter)seedCounter=maxN;
   return true;
 }
