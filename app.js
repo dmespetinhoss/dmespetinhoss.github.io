@@ -12,6 +12,7 @@ var CARTKEY = 'dm_delivery_cart';        // carrinho do cliente (local, sobreviv
 var ADMKEY = 'dm_delivery_adm';          // sessão do painel do dono (fica 24h no aparelho pra não deslogar toda hora)
 var CHKKEY = 'dm_delivery_chk';          // estado do checkout (retomar na mesma tela se o app recarregar ao voltar do WhatsApp)
 var lastRev = null;
+var _cardRev = null;     // versão do CARDÁPIO (canal leve): muda só quando o dono edita o cardápio
 var _pushing = 0;        // nº de envios (PUT /estado) em andamento: enquanto >0, não puxo/sobrescrevo meu estado
 var _lastPushTs = 0;     // timestamp do meu último envio: por alguns segundos, ignoro estados mais VELHOS que ele (evita apagar pedido recém-criado)
 function revTs_(rev){ var m=/^(\d+)/.exec(String(rev||'')); return m?parseInt(m[1],10):0; }
@@ -266,7 +267,41 @@ function save(cfg){
 }
 // saveCfg = salva uma mudança de CARDÁPIO/LOJA (produtos, categorias, promoções, horário, pix, marca).
 // Sem isso, o servidor preserva a config e um push de pedido de outro aparelho reverteria a mudança.
-function saveCfg(){ return save(true); }
+// saveCfg: mudança de CARDÁPIO/LOJA empurra só o cardápio (leve, ~15KB) pelo canal /cardapio — rápido e chega no cliente na hora.
+function saveCfg(){
+  if(PREVIEW) return Promise.resolve(true);
+  try{ localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){}
+  persistLocal();
+  if(CLOUD) return pushCardapio();
+  marcarRev(); return Promise.resolve(true);
+}
+function pushCardapio(){
+  if(!CLOUD) return Promise.resolve(true);
+  var body={produtos:S.produtos,categorias:S.categorias,loja:S.loja,promos:S.promos};
+  _pushing++; _lastPushTs=Date.now();   // protege contra um pull concorrente reverter a mudança local
+  function envia(){ return apiPut('/cardapio',body).then(function(r){ if(r&&r.ok){ if(r.cardRev!=null)_cardRev=r.cardRev; return true; } return false; }); }
+  return envia().then(function(ok){ return ok?true:envia(); }).catch(function(){ return false; })
+    .then(function(v){ _pushing=Math.max(0,_pushing-1); return v; });  // 1 retry
+}
+// Canal leve do cardápio: o cliente (e o painel) acompanham só o cardápio pra ver esgotado/disponível NA HORA, sem baixar os pedidos.
+function pullCardapio(){
+  if(!CLOUD) return Promise.resolve();
+  if(_pushing>0) return Promise.resolve();
+  return apiGet('/cardapio/rev').then(function(r){
+    var cr=r&&r.cardRev;
+    if(cr==null || cr===_cardRev) return;   // cardápio não mudou -> não baixa
+    return apiGet('/cardapio').then(function(c){
+      if(!c||!Array.isArray(c.produtos)||!c.produtos.length) return;
+      _cardRev=c.cardRev;
+      S.produtos=c.produtos;
+      if(Array.isArray(c.categorias)&&c.categorias.length) S.categorias=c.categorias;
+      if(c.loja&&c.loja.nome) S.loja=c.loja;
+      if(Array.isArray(c.promos)) S.promos=c.promos;
+      try{ localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){}
+      render();
+    });
+  });
+}
 
 /* ---- conta do cliente (login por WhatsApp, tabela 'clientes' no Supabase) ---- */
 function normWhats(t){ return String(t||'').replace(/\D/g,''); }
@@ -2256,13 +2291,15 @@ function cloudBoot(){
     // NUNCA subir o seed por cima da produção só porque a leitura falhou (foi o que zerou tudo em 29/09).
   });
   cloudSubscribe();
-  setInterval(cloudPull, 5000);   // sincroniza a cada 5s (puxa só o rev; baixa o estado só quando muda)
+  pullCardapio();                 // cardápio na hora (canal leve)
+  setInterval(cloudPull, 5000);   // pedidos: a cada 5s (puxa só o rev; baixa o estado só quando muda)
+  setInterval(pullCardapio, 4000);// cardápio (esgotado/disponível): a cada 4s, leve e independente dos pedidos
 }
 
 if(CLOUD && !PREVIEW){
   cloudBoot();
-  window.addEventListener('focus', function(){ cloudPull(); refreshCliente(); admOnReady_(); });
-  if(typeof document!=='undefined') document.addEventListener('visibilitychange', function(){ if(document.hidden){ persistChk(); } else { cloudPull(); refreshCliente(); admOnReady_(); } });
+  window.addEventListener('focus', function(){ cloudPull(); pullCardapio(); refreshCliente(); admOnReady_(); });
+  if(typeof document!=='undefined') document.addEventListener('visibilitychange', function(){ if(document.hidden){ persistChk(); } else { cloudPull(); pullCardapio(); refreshCliente(); admOnReady_(); } });
   window.addEventListener('pagehide', function(){ persistChk(); });
 } else {
   if(bc){ bc.onmessage=function(ev){ if(ev&&ev.data&&ev.data!==lastRev){ lastRev=ev.data; if(reloadShared()) render(); } }; }
