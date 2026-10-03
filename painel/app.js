@@ -19,11 +19,33 @@ function revTs_(rev){ var m=/^(\d+)/.exec(String(rev||'')); return m?parseInt(m[
 var bc = null; try{ if(typeof BroadcastChannel!=='undefined') bc = new BroadcastChannel('dm_delivery'); }catch(e){ bc=null; }
 /* ===== Sincronização na nuvem (Supabase) — cross-device (celular <-> computador) ===== */
 var API_BASE = 'https://api-dm.lecomigo.tech';                 // back-end no VPS proprio (substitui o Supabase)
-var API_KEY  = 'aac469a17dcc71ac8bcca4e97a0e3a03';            // chave publica (gate leve de escrita)
 var CLOUD = !!(API_BASE && typeof window!=='undefined' && typeof window.fetch!=='undefined');
-function apiGet(path){ return window.fetch(API_BASE+path,{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; }); }
-function apiPut(path,body){ return window.fetch(API_BASE+path,{method:'PUT',headers:{'content-type':'application/json','x-api-key':API_KEY},body:JSON.stringify(body)}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; }); }
-function apiPost(path,body){ return window.fetch(API_BASE+path,{method:'POST',headers:{'content-type':'application/json','x-api-key':API_KEY},body:JSON.stringify(body)}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; }); }
+/* SEGURANÇA (v55): o app NÃO tem chave nem senha. Toda escrita vai com o token do LOGIN, validado pelo servidor:
+   - painel: sessão do dono/equipe (usuário + senha conferidos no servidor)
+   - cliente: token do WhatsApp (emitido pelo servidor no Entrar/Cadastrar) */
+var CLITOKKEY = 'dm_delivery_clitok';    // token do cliente {w:whats, t:token}
+function admToken_(){ try{ var s=JSON.parse(localStorage.getItem(ADMKEY)||'null'); return (s&&s.token&&s.exp>Date.now())?s.token:''; }catch(e){ return ''; } }
+function cliTok_(){ try{ var s=JSON.parse(localStorage.getItem(CLITOKKEY)||'null'); return (s&&s.t&&s.w)?s:null; }catch(e){ return null; } }
+function cliToken_(){ var s=cliTok_(); return (s && typeof UI!=='undefined' && UI.me && s.w===telDig(UI.me.tel)) ? s.t : ''; }
+// chamada à API: devolve {status, json} (status 0 = sem rede). auth=true manda o token do login deste app.
+function apiCall(method,path,body,auth){
+  var h={}; if(body!==undefined) h['content-type']='application/json';
+  if(auth){ var t=(APP_MODE==='admin')?admToken_():cliToken_(); if(t) h['authorization']='Bearer '+t; }
+  return window.fetch(API_BASE+path,{method:method,cache:'no-store',headers:h,body:(body!==undefined?JSON.stringify(body):undefined)})
+    .then(function(r){ return r.json().then(function(j){ return {status:r.status,json:j}; },function(){ return {status:r.status,json:null}; }); })
+    .then(function(res){ if(res.status===401 && auth) sessaoInvalida_(); return res; })
+    .catch(function(){ return {status:0,json:null}; });
+}
+function apiGet(path,auth){ return apiCall('GET',path,undefined,auth).then(function(r){ return (r.status>=200&&r.status<300)?r.json:null; }); }
+function apiPut(path,body){ return apiCall('PUT',path,body,true).then(function(r){ return (r.status>=200&&r.status<300)?r.json:null; }); }
+function apiPost(path,body){ return apiCall('POST',path,body,true).then(function(r){ return (r.status>=200&&r.status<300)?r.json:null; }); }
+// o servidor recusou o token: painel volta pro login; cliente renova o token no próximo envio
+var _avisouSessao=false;
+function sessaoInvalida_(){
+  if(APP_MODE==='admin'){
+    if(UI.adm&&UI.adm.logged){ UI.adm.logged=false; UI.adm.user=null; UI.adm.order=null; UI.adm.mais=null; limparSessaoAdm_(); render(); if(!_avisouSessao){ _avisouSessao=true; toast('Sua sessão terminou. Entre de novo com usuário e senha.','err'); setTimeout(function(){ _avisouSessao=false; },5000); } }
+  } else { try{ localStorage.removeItem(CLITOKKEY); }catch(e){} }
+}
 var PIX_AUTO = CLOUD;   // PIX automático (Mercado Pago) só quando conectado ao servidor; offline/preview cai no manual
 // modo vitrine: abrir com ?preview=1 mostra o cardápio do código (seed) SEM tocar na nuvem nem no site real
 var PREVIEW = (typeof location!=='undefined') && /[?&]preview=1/.test((location.search||''));
@@ -262,6 +284,7 @@ function save(cfg){
   if(PREVIEW) return Promise.resolve(true);
   try{ localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){}   // cache local best-effort: se estourar a cota, NÃO derruba o resto
   persistLocal();                                                                 // SACOLA + perfil do cliente (crítico: SEMPRE grava)
+  if(CLOUD && APP_MODE!=='admin') return Promise.resolve(true);                   // cliente NUNCA grava o estado geral (só o servidor e o painel logado)
   if(CLOUD) return cloudPush(cfg);                                                // devolve a promessa: dá pra ESPERAR o salvamento (ex.: antes de imprimir)
   marcarRev(); return Promise.resolve(true);
 }
@@ -272,12 +295,13 @@ function saveCfg(){
   if(PREVIEW) return Promise.resolve(true);
   try{ localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){}
   persistLocal();
+  if(CLOUD && APP_MODE!=='admin') return Promise.resolve(true);
   if(CLOUD) return pushCardapio();
   marcarRev(); return Promise.resolve(true);
 }
 function pushCardapio(){
   if(!CLOUD) return Promise.resolve(true);
-  var body={produtos:S.produtos,categorias:S.categorias,loja:S.loja,promos:S.promos};
+  var body={produtos:S.produtos,categorias:S.categorias,loja:S.loja,promos:S.promos,bairros:S.bairros};
   _pushing++; _lastPushTs=Date.now();   // protege contra um pull concorrente reverter a mudança local
   function envia(){ return apiPut('/cardapio',body).then(function(r){ if(r&&r.ok){ if(r.cardRev!=null)_cardRev=r.cardRev; return true; } return false; }); }
   return envia().then(function(ok){ return ok?true:envia(); }).catch(function(){ return false; })
@@ -300,6 +324,7 @@ function pullCardapio(){
       if(Array.isArray(c.categorias)&&c.categorias.length) S.categorias=c.categorias;
       if(c.loja&&c.loja.nome) S.loja=c.loja;
       if(Array.isArray(c.promos)) S.promos=c.promos;
+      if(Array.isArray(c.bairros)) S.bairros=c.bairros;
       garantirEstado_();
       try{ localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){}
       render();
@@ -311,12 +336,38 @@ function pullCardapio(){
 function normWhats(t){ return String(t||'').replace(/\D/g,''); }
 function normNome(s){ return String(s||'').toLowerCase().trim().replace(/\s+/g,' ').normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function estaLogado(){ return !!(typeof UI!=='undefined' && UI.me && telValido(UI.me.tel) && (UI.me.nome||'').trim()); }
-function cloudCliGet(whats){ if(!CLOUD) return Promise.resolve(null); return apiGet('/cliente/'+encodeURIComponent(whats)); }
-function cloudCliUpsert(){ if(!CLOUD) return; var w=normWhats(UI.me&&UI.me.tel); if(!w) return; apiPut('/cliente',{whats:w,nome:UI.me.nome||'',foto:UI.me.foto||null,enderecos:UI.me.enderecos||[]}); }
+// Entrar/Cadastrar no SERVIDOR (WhatsApp + nome). Devolve {ok, token, cliente} ou {erro}. Guarda o token deste WhatsApp.
+function cliLoginServidor_(whats,nome){
+  return apiCall('POST','/cliente/login',{whats:whats,nome:nome},false).then(function(r){
+    if(r.status===200 && r.json && r.json.token){ try{ localStorage.setItem(CLITOKKEY, JSON.stringify({w:telDig(whats),t:r.json.token})); }catch(e){} return {ok:true,novo:!!r.json.novo,cliente:r.json.cliente||{}}; }
+    return {ok:false,erro:(r.json&&r.json.error)||(r.status===0?'sem_rede':'falha'),status:r.status};
+  });
+}
+// garante o token do WhatsApp do pedido (já logado com esse número = não chama o servidor)
+var _tokEmAndamento={};
+function garantirTokenCliente_(whats,nome){
+  var s=cliTok_(), w=telDig(whats);
+  if(s && s.w===w) return Promise.resolve({ok:true});
+  if(!_tokEmAndamento[w]) _tokEmAndamento[w]=cliLoginServidor_(whats,nome).then(function(g){ delete _tokEmAndamento[w]; return g; });   // 1 login por vez
+  return _tokEmAndamento[w];
+}
+function msgErroLoginCli_(e){
+  if(e==='nome_diferente') return 'Esse WhatsApp já tem cadastro em outro nome. Use o mesmo nome completo do cadastro.';
+  if(e==='muitas_tentativas') return 'Muitas tentativas seguidas. Aguarde alguns minutos e tente de novo.';
+  if(e==='sem_rede') return 'Sem conexão. Confira a internet e tente de novo.';
+  if(e==='whats_invalido') return 'Digite um WhatsApp válido com DDD';
+  if(e==='nome_invalido') return 'Digite seu nome completo (nome e sobrenome)';
+  return 'Não consegui entrar agora. Tente de novo em instantes.';
+}
+function cloudCliUpsert(){
+  if(!CLOUD || !estaLogado()) return;
+  var me=UI.me;
+  garantirTokenCliente_(me.tel,me.nome).then(function(g){ if(g.ok) apiPut('/cliente',{nome:me.nome||'',foto:me.foto||null,enderecos:me.enderecos||[]}); });
+}
 function refreshCliente(){
   if(!CLOUD||!estaLogado()) return;
-  cloudCliGet(normWhats(UI.me.tel)).then(function(cli){
-    if(!cli){ cloudCliUpsert(); return; }   // conta ainda nao existe na tabela -> cria a partir do local
+  garantirTokenCliente_(UI.me.tel,UI.me.nome).then(function(g){ return g.ok ? apiGet('/cliente/me',true) : null; }).then(function(cli){
+    if(!cli) return;
     var ae=(typeof document!=='undefined')&&document.activeElement;
     if(ae&&ae.tagName&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return; // nao atrapalha quem digita
     if(Array.isArray(cli.enderecos)) UI.me.enderecos=cli.enderecos;
@@ -341,7 +392,19 @@ function load(){
   try{ var m=localStorage.getItem(MEKEY); if(m){ var mm=JSON.parse(m); if(mm&&typeof mm==='object') UI.me=mm; } }catch(e){}
   if(APP_MODE!=='admin'){ try{ var ck=localStorage.getItem(CARTKEY); if(ck){ var ct=JSON.parse(ck); if(Array.isArray(ct)) UI.cart=ct; } }catch(e){} }
   garantirEstado_();
+  if(APP_MODE!=='admin' && had) limparDadosAlheios_();
   return had;
+}
+// PRIVACIDADE: o cache antigo (até v54) guardava os pedidos e clientes de TODO MUNDO no celular do cliente.
+// No app do cliente fica só o cardápio + os pedidos DELE.
+function limparDadosAlheios_(){
+  try{
+    var meDig=telDig(UI.me&&UI.me.tel);
+    S.pedidos=meDig?(S.pedidos||[]).filter(function(p){ return p&&telDig(p.tel)===meDig; }):[];
+    S.clientes=[]; S.audit=[]; S.equipe=[];
+    garantirEstado_();
+    localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S)));
+  }catch(e){}
 }
 
 /* lookups */
@@ -543,7 +606,7 @@ function cliTop(cur){
     '<div class="tb-id"><div class="tb-tt">'+esc(l.nome)+'</div>'+
     '<div class="tb-sub"><span class="dot '+(lojaAberta()?'on':'off')+'"></span>'+(lojaAberta()?'Aberto agora':'Fechado agora')+'</div></div>'+
     '<nav class="desktop-nav">'+nav+'</nav>'+
-    '<div class="tb-right"><button class="iconbtn" data-action="cli-go" data-s="perfil" aria-label="Meu perfil">'+(UI.me.foto?'<img class="ava-mini" src="'+UI.me.foto+'" alt="">':ic('user'))+'</button></div></div>';
+    '<div class="tb-right"><button class="iconbtn" data-action="cli-go" data-s="perfil" aria-label="Meu perfil">'+(UI.me.foto?'<img class="ava-mini" src="'+esc(UI.me.foto)+'" alt="">':ic('user'))+'</button></div></div>';
 }
 function cliTabs(cur){
   return '<div class="tabbar">'+CLI_TABS.map(function(t){ var b=(t[0]==='carrinho'&&cartCount()>0)?'<span class="tbadge">'+cartCount()+'</span>':'';
@@ -598,7 +661,7 @@ function prodCard(p){
     '<div class="pbody"><div class="pname">'+esc(p.nome)+'</div>'+
     (p.desc?'<div class="pdesc">'+esc(p.desc)+'</div>':'')+
     '<div class="pprice">'+priceLabel+'</div></div>'+
-    '<div class="pthumb"><img class="pimg" src="'+prodImg(p)+'" alt="">'+
+    '<div class="pthumb"><img class="pimg" src="'+esc(prodImg(p))+'" alt="">'+
     (off?'<span class="selo">Esgotado</span>':'<button class="padd" data-action="cli-prod" data-id="'+p.id+'" aria-label="Adicionar '+esc(p.nome)+'">'+ic('plus')+'</button>')+'</div></div>';
 }
 
@@ -624,7 +687,7 @@ function normAcomp_(s){ return foldAscii(String(s||'')).toLowerCase().trim(); }
 function adicEsgotado_(nome){ var n=normAcomp_(nome); return (S.produtos||[]).some(function(p){ return p.disp==='esgotado' && normAcomp_(p.nome)===n; }); }
 function pdHTML(p){
   var vars=pdVars(p), varSel = vars ? vars[pdSel.varIdx] : null;
-  var h='<img class="pd-img" src="'+prodImg(p)+'" alt="">'+
+  var h='<img class="pd-img" src="'+esc(prodImg(p))+'" alt="">'+
     '<div class="pd-name">'+esc(p.nome)+'</div>'+(p.desc?'<div class="pd-desc">'+esc(p.desc)+'</div>':'')+
     '<div class="pd-price">'+money(pdBase(p))+'</div>';
   if(vars){
@@ -684,7 +747,7 @@ function cliCarrinho(){
   h+='<div class="cart-card">'+UI.cart.map(function(it,idx){
     var lines=itemLines(it).map(esc);
     return '<div class="citem2">'+
-      '<img class="ci-img" src="'+itemImg(it)+'" alt="" data-action="cart-edit" data-i="'+idx+'">'+
+      '<img class="ci-img" src="'+esc(itemImg(it))+'" alt="" data-action="cart-edit" data-i="'+idx+'">'+
       '<div class="ci-main"><div class="ci-name" data-action="cart-edit" data-i="'+idx+'">'+esc(it.nome)+'</div>'+
       (lines.length?'<div class="ci-adds">'+lines.join('<br>')+'</div>':'')+
       '<div class="stepper"><button data-action="cart-dec" data-i="'+idx+'" aria-label="Menos">'+ic('minus')+'</button><span>'+it.qty+'</span><button data-action="cart-inc" data-i="'+idx+'" aria-label="Mais">'+ic('plus')+'</button></div></div>'+
@@ -765,12 +828,12 @@ function cliPagamento(){
     var pix=pixAtual(), qimg=qrDataUrl(pix.code);
     h+='<div class="pixbox">'+
       '<div class="pix-cap">Pague <strong>'+money(pix.valor)+'</strong> com Pix</div>'+
-      (qimg?'<img class="pix-qr" src="'+qimg+'" alt="QR Code Pix">':'<div class="notice info left" style="margin:0 0 10px">'+ic('info')+'<div>Use o código Pix abaixo (copia e cola).</div></div>')+
+      (qimg?'<img class="pix-qr" src="'+esc(qimg)+'" alt="QR Code Pix">':'<div class="notice info left" style="margin:0 0 10px">'+ic('info')+'<div>Use o código Pix abaixo (copia e cola).</div></div>')+
       '<div class="pix-cap">'+esc(S.loja.pixNome)+' · chave '+esc(S.loja.pixKey)+'</div>'+
       '<button class="btn btn-primary btn-sm btn-block" data-action="chk-copiapix">'+ic('copy')+' Copiar código Pix</button>'+
       '<textarea class="pix-code" readonly onclick="this.select()" aria-label="Código Pix copia e cola">'+esc(pix.code)+'</textarea>'+
       '<div class="upload-wrap"><label class="up-lb">Comprovante do Pix</label>'+
-      '<div class="upload'+(c.comprov?' has':'')+'" data-action="chk-upload">'+(c.comprov?ic('check')+' Comprovante anexado<img src="'+c.comprov+'">':ic('attach')+' Toque para anexar o comprovante')+'</div>'+
+      '<div class="upload'+(c.comprov?' has':'')+'" data-action="chk-upload">'+(c.comprov?ic('check')+' Comprovante anexado<img src="'+esc(c.comprov)+'">':ic('attach')+' Toque para anexar o comprovante')+'</div>'+
       '<button class="btn btn-outline btn-sm btn-block" style="margin-top:8px" data-action="chk-pix-whats-abrir">'+ic('chat')+' 1. Enviar comprovante no WhatsApp</button>'+
       '<button class="btn '+(c.waAberto?'btn-primary':'btn-ghost')+' btn-sm btn-block" style="margin-top:8px" data-action="chk-pix-whats-enviei"'+(c.waAberto?'':' disabled')+'>'+ic(c.waAberto?'check':'lock')+' 2. Já enviei o comprovante - fazer pedido</button></div>'+
       '<div class="notice info left">'+ic('info')+'<div><strong>Não consegue anexar?</strong> <strong>1)</strong> Toque em "Enviar comprovante no WhatsApp" e mande o print do Pix. <strong>2)</strong> Volte aqui e toque em "Já enviei o comprovante" pra fazer o pedido'+(c.waAberto?'':' (esse botão libera depois do passo 1)')+'. Quem consegue anexar, anexa acima e toca em "Enviar pedido para validação".</div></div></div>';
@@ -898,7 +961,7 @@ function ordCardCli(o){
 function cliPerfil(){
   var me=UI.me, inicial=(me.nome||'?').trim().charAt(0).toUpperCase();
   var h='<div class="pagehead"><h2>Meu perfil</h2></div>';
-  var avatar = me.foto ? '<img class="avatar-lg" src="'+me.foto+'" alt="">' : '<div class="avatar-lg">'+esc(inicial)+'</div>';
+  var avatar = me.foto ? '<img class="avatar-lg" src="'+esc(me.foto)+'" alt="">' : '<div class="avatar-lg">'+esc(inicial)+'</div>';
   h+='<div class="perfil-top">'+avatar+
      '<div><div class="pf-nome">'+esc(me.nome||'Visitante')+'</div><div class="pf-tel">'+esc(me.tel||'Sem telefone')+'</div>'+
      '<button class="btn btn-outline btn-sm" style="margin-top:8px" data-action="me-foto">'+ic('camera')+' '+(me.foto?'Trocar foto':'Adicionar foto')+'</button></div></div>';
@@ -1133,7 +1196,7 @@ function admDetalhe(o){
      (o.desconto>0?'<div class="dp-line"><span>Desconto'+(o.cupom?' ('+esc(o.cupom)+')':'')+'</span><span>- '+money(o.desconto)+'</span></div>':'')+
      (o.tipo==='delivery'?'<div class="dp-line"><span>Taxa de entrega</span><span>'+money(o.taxa)+'</span></div>':'')+
      '<div class="dp-line big"><strong>Total</strong><strong class="gold">'+money(o.total)+'</strong></div>'+
-     (o.pay.comprovante?'<div class="comprov-wrap"><div class="up-lb">Comprovante enviado:</div><img class="comprov" src="'+o.pay.comprovante+'" data-action="ver-img" data-src="'+o.pay.comprovante+'"><div class="comprov-hint">'+ic('search')+' Toque para ampliar</div></div>':(o.pay.viaWhats?'<div class="notice info" style="margin-top:10px">'+ic('chat')+'<div><strong>Comprovante pelo WhatsApp.</strong> O cliente não conseguiu anexar no app e vai mandar o comprovante no WhatsApp do restaurante. Confira lá pelo nome (<strong>'+esc(o.nome)+'</strong>) e confirme o Pix.</div></div>':''))+'</div>';
+     (o.pay.comprovante?'<div class="comprov-wrap"><div class="up-lb">Comprovante enviado:</div><img class="comprov" src="'+esc(o.pay.comprovante)+'" data-action="ver-img" data-src="'+esc(o.pay.comprovante)+'"><div class="comprov-hint">'+ic('search')+' Toque para ampliar</div></div>':(o.pay.viaWhats?'<div class="notice info" style="margin-top:10px">'+ic('chat')+'<div><strong>Comprovante pelo WhatsApp.</strong> O cliente não conseguiu anexar no app e vai mandar o comprovante no WhatsApp do restaurante. Confira lá pelo nome (<strong>'+esc(o.nome)+'</strong>) e confirme o Pix.</div></div>':''))+'</div>';
   h+='<div class="actionbar">'+admAcoes(o)+'</div>';
   h+='<div class="dp-block"><h4>Histórico</h4>'+(o.historico||[]).map(function(x){
     return '<div class="dp-line"><span>'+esc(x.t)+' · '+esc(x.who)+'</span><span>'+esc(x.act)+'</span></div>';
@@ -1498,7 +1561,7 @@ function admCardapio(){
     h+='<div class="padm-grid">'+items.map(function(p){
       var on=p.disp==='disponivel';
       var nameCell='<div class="pa-b"'+(admin?' data-action="adm-edit-produto" data-id="'+p.id+'" style="cursor:pointer"':'')+'><div class="pa-n">'+esc(p.nome)+(p.disp==='oculto'?' <span class="tag">oculto</span>':p.disp==='esgotado'?' <span class="tag">esgotado</span>':'')+'</div><div class="pa-p">'+money(p.preco)+'</div></div>';
-      return '<div class="padm"><img class="pa-img" src="'+prodImg(p)+'" alt="">'+nameCell+
+      return '<div class="padm"><img class="pa-img" src="'+esc(prodImg(p))+'" alt="">'+nameCell+
         '<div class="switch'+(on?' on':'')+'" data-action="adm-toggle-disp" data-id="'+p.id+'" role="button" aria-label="Disponível hoje"></div></div>';
     }).join('')+'</div>';
   });
@@ -1659,8 +1722,25 @@ function admClientes(){
 function admEquipe(){
   return '<div class="pagehead"><h2>Equipe</h2><p>Quem acessa o painel</p></div>'+
     S.equipe.map(function(u){ return '<div class="clirow"><div class="cl-av">'+esc(u.nome.charAt(0))+'</div><div><div class="cl-n">'+esc(u.nome)+'</div><div class="cl-s">@'+esc(u.user)+' · '+(u.papel==='admin'?'Dono (acesso total)':'Atendente (pedidos e cardápio do dia)')+'</div></div></div>'; }).join('')+
-    '<div class="notice info">'+ic('info')+'<div>Na versão final cada pessoa tem login próprio; o atendente não mexe em Pix, relatórios nem exclui produto. Toda ação fica registrada com data/hora/usuário.</div></div>';
+    '<div class="notice info">'+ic('lock')+'<div>A senha é conferida pelo servidor e não fica guardada no app. O atendente não mexe em Pix, horários, taxas nem promoções.</div></div>'+
+    '<div class="card"><h4 style="margin:0 0 8px">Trocar minha senha</h4>'+
+    '<div class="field"><label>Senha atual</label><input id="eq-atual" type="password" autocomplete="current-password"></div>'+
+    '<div class="field"><label>Nova senha (mínimo 8 caracteres)</label><input id="eq-nova" type="password" autocomplete="new-password"></div>'+
+    '<div class="field"><label>Repita a nova senha</label><input id="eq-nova2" type="password" autocomplete="new-password"></div>'+
+    '<button class="btn btn-primary btn-block" data-action="adm-trocar-senha">Salvar nova senha</button>'+
+    '<p class="muted small2" style="margin:8px 0 0">Ao trocar, os outros aparelhos logados com esta conta saem e precisam entrar com a senha nova.</p></div>';
 }
+on('adm-trocar-senha',function(){
+  var a=$('eq-atual').value, n=$('eq-nova').value, n2=$('eq-nova2').value;
+  if(!a||!n){ toast('Preencha a senha atual e a nova','err'); return; }
+  if(n.length<8){ toast('A nova senha precisa de pelo menos 8 caracteres','err'); return; }
+  if(n!==n2){ toast('As duas senhas novas não são iguais','err'); return; }
+  apiCall('POST','/admin/senha',{atual:a,nova:n},true).then(function(res){
+    if(res.status===200){ $('eq-atual').value=''; $('eq-nova').value=''; $('eq-nova2').value=''; toast('Senha trocada','ok'); return; }
+    if(res.status===403){ toast('Senha atual errada','err'); return; }
+    toast('Não consegui trocar agora. Tente de novo.','err');
+  });
+});
 function admMarca(){
   var l=S.loja;
   return '<div class="pagehead"><h2>Marca</h2></div>'+
@@ -1685,7 +1765,7 @@ on('pd-feijao',function(d){ pdSel.feijao=d.f; patchPd(); });
 on('pd-sabor',function(d){ pdSel.sabor=d.f; patchPd(); });
 on('ver-img',function(d){
   if(!d.src) return;
-  modal('<div class="imgzoom-wrap" data-action="img-zoom"><img class="imgzoom" src="'+d.src+'" alt="Comprovante"></div>'+
+  modal('<div class="imgzoom-wrap" data-action="img-zoom"><img class="imgzoom" src="'+esc(d.src)+'" alt="Comprovante"></div>'+
     '<div class="imgzoom-cap">'+ic('search')+' Toque na imagem para ampliar ou reduzir</div>'+
     '<div class="sticky-cta"><button class="btn btn-ghost btn-block" data-action="close-modal">Fechar</button></div>', true);
 });
@@ -1787,11 +1867,17 @@ function iniciarPixAuto(){
   UI.me.nome=c.nome; UI.me.tel=c.whats;
   if(c.modo==='delivery'&&c.rua){ var ex=(UI.me.enderecos||[]).filter(function(e){return e.rua===c.rua&&e.numero===c.numero;})[0]; if(!ex) UI.me.enderecos.unshift({bairro:c.bairro,rua:c.rua,numero:c.numero,comp:c.comp,ref:c.ref,end:ped.end}); }
   upsertCliente(c.whats,c.nome,c.modo==='delivery'?{end:ped.end,bairro:c.bairro,rua:c.rua,numero:c.numero,comp:c.comp,ref:c.ref}:null);
-  if(CLOUD) cloudCliUpsert();
   persistLocal();
   UI.pix={ status:'criando', valor:ped.total, mp_id:null, copia:'', qr:'' };
   UI.cli.screen='pixpg'; render();
-  apiPost('/pix/criar',{ valor:ped.total, pedido:ped }).then(function(r){
+  garantirTokenCliente_(c.whats,c.nome).then(function(g){
+    if(!g.ok) return {status:-1,json:{error:g.erro}};
+    cloudCliUpsert();
+    return apiCall('POST','/pix/criar',{ valor:ped.total, pedido:ped },true);
+  }).then(function(res){
+    var r=res&&res.json;
+    if(res.status===-1){ UI.pix=null; UI.cli.screen='dados'; render(); toast(msgErroLoginCli_(r&&r.error),'err'); return; }
+    if(recusaPedido_(res)){ UI.pix=null; return; }
     if(!r || !r.ok || !r.mp_id){
       UI.pix=null; c.pixManual=true; UI.cli.screen='pagamento'; render();
       toast('Não consegui gerar o Pix automático agora. Use o Pix com comprovante abaixo.','err');
@@ -1806,7 +1892,7 @@ function pixPollStart(){ pixPollStop(); UI._pixTimer=setInterval(pixPoll,3500); 
 function pixPoll(){
   if(!UI.pix || !UI.pix.mp_id || UI.cli.screen!=='pixpg'){ pixPollStop(); return; }
   var id=UI.pix.mp_id;
-  apiGet('/pix/status/'+encodeURIComponent(id)).then(function(r){
+  apiGet('/pix/status/'+encodeURIComponent(id),true).then(function(r){
     if(!r || !UI.pix || UI.pix.mp_id!==id) return;
     if(r.status==='approved'){
       pixPollStop();
@@ -1833,7 +1919,7 @@ function cliPixPagamento(){
   }
   h+='<div class="pixbox">'+
      '<div class="pix-cap">Pague <strong>'+money(p.valor)+'</strong> com Pix</div>'+
-     (p.qr?'<img class="pix-qr" src="'+p.qr+'" alt="QR Code Pix">':'<div class="notice info left">'+ic('info')+'<div>Use o código copia e cola abaixo.</div></div>')+
+     (p.qr?'<img class="pix-qr" src="'+esc(p.qr)+'" alt="QR Code Pix">':'<div class="notice info left">'+ic('info')+'<div>Use o código copia e cola abaixo.</div></div>')+
      '<button class="btn btn-primary btn-sm btn-block" data-action="pix-copia">'+ic('copy')+' Copiar código Pix</button>'+
      '<textarea class="pix-code" readonly onclick="this.select()" aria-label="Código Pix copia e cola">'+esc(p.copia)+'</textarea>'+
      '<div class="notice info left" style="margin-top:10px">'+ic('clock')+'<div><strong>Aguardando seu pagamento...</strong> Assim que o Pix cair, seu pedido entra automático no restaurante. Pode deixar essa tela aberta.</div></div>'+
@@ -1882,12 +1968,15 @@ function criarPedido(){
   UI.me.nome=c.nome; UI.me.tel=c.whats;
   if(c.modo==='delivery'&&c.rua){ var ex=(UI.me.enderecos||[]).filter(function(e){return e.rua===c.rua&&e.numero===c.numero;})[0]; if(!ex) UI.me.enderecos.unshift({bairro:c.bairro,rua:c.rua,numero:c.numero,comp:c.comp,ref:c.ref,end:endComp}); }
   upsertCliente(c.whats,c.nome,c.modo==='delivery'?{end:endComp,bairro:c.bairro,rua:c.rua,numero:c.numero,comp:c.comp,ref:c.ref}:null);
-  if(CLOUD) cloudCliUpsert();   // sincroniza a conta/endereços do cliente na nuvem
   persistLocal();
   if(CLOUD){
     // cria o pedido DIRETO no servidor (payload pequeno, id do servidor, com retry) -> não perde por falha de envio do estado inteiro
     UI.cli.screen='enviando'; render();
-    criarPedidoCloud_(ped,0);
+    garantirTokenCliente_(c.whats,c.nome).then(function(g){
+      if(!g.ok){ UI.cli.screen='dados'; render(); toast(msgErroLoginCli_(g.erro),'err'); return; }
+      cloudCliUpsert();   // sincroniza a conta/endereços do cliente na nuvem
+      criarPedidoCloud_(ped,0);
+    });
     return ped;
   }
   // modo local (preview/sem nuvem): comportamento antigo
@@ -1902,10 +1991,24 @@ function cliEnviando(){
   return '<div class="pagehead"><h2>Enviando seu pedido...</h2></div>'+
     '<div class="notice info left">'+ic('clock')+'<div>Só um instante, estamos registrando seu pedido no restaurante. Não feche o app.</div></div>';
 }
+// O servidor recusou o pedido por regra (fechado, bloqueado, item esgotado...). Mostra o motivo e devolve true.
+function recusaPedido_(res){
+  var e=res&&res.json&&res.json.error;
+  if(res.status===403 && e==='loja_fechada'){ UI.cli.screen='pagamento'; render(); toast('Infelizmente estamos fechado no momento','err'); return true; }
+  if(res.status===403 && e==='bloqueado'){ UI.cli.screen='pagamento'; render(); toast('Não foi possível concluir o pedido. Fale com o restaurante pelo WhatsApp.','err'); return true; }
+  if(res.status===403 && e==='whats_diferente'){ UI.cli.screen='dados'; render(); toast('Confira o WhatsApp do pedido e tente de novo.','err'); return true; }
+  if(res.status===429){ UI.cli.screen='pagamento'; render(); toast('Muitas tentativas seguidas. Aguarde alguns minutos.','err'); return true; }
+  if(res.status===400 && res.json && res.json.erros && res.json.erros.length){
+    pullCardapio(); UI.cli.screen='carrinho'; render(); toast(res.json.erros[0]+'. Confira a sacola.','err'); return true;
+  }
+  return false;
+}
 function criarPedidoCloud_(ped,tent){
-  apiPost('/pedido',{pedido:ped}).then(function(r){
-    if(r&&r.ok&&r.id){
-      ped.id=r.id; if(!order(ped.id)) S.pedidos.unshift(ped);
+  apiCall('POST','/pedido',{pedido:ped},true).then(function(res){
+    var r=res.json;
+    if(res.status===200&&r&&r.ok&&r.id){
+      var srv=r.pedido||ped; srv.id=r.id;   // vale o pedido do SERVIDOR (preço e situação conferidos lá)
+      S.pedidos=S.pedidos.filter(function(x){ return x.id!==srv.id; }); S.pedidos.unshift(srv);
       UI.curOrder=r.id; UI.cart=[]; UI.cupom=null;
       UI.chk={modo:null,bairro:'',rua:'',numero:'',comp:'',ref:'',nome:ped.nome,whats:ped.tel,pay:null,troco:'',comprov:null,obs:''};
       try{ localStorage.removeItem(CHKKEY); }catch(e){}
@@ -1913,6 +2016,8 @@ function criarPedidoCloud_(ped,tent){
       UI.cli.screen='confirmado'; render();
       return;
     }
+    if(recusaPedido_(res)) return;
+    if(res.status===401){ cliLoginServidor_(ped.tel,ped.nome).then(function(g){ if(g.ok && tent<4) criarPedidoCloud_(ped,tent+1); else { UI.cli.screen='dados'; render(); toast(msgErroLoginCli_(g.erro),'err'); } }); return; }
     if(tent<4){ setTimeout(function(){ criarPedidoCloud_(ped,tent+1); }, 1500); return; }
     // falhou de vez: NÃO perde a sacola, volta pro pagamento e avisa
     UI.cli.screen='pagamento'; render();
@@ -1922,7 +2027,7 @@ function criarPedidoCloud_(ped,tent){
 on('cli-track',function(d){ UI.curOrder=d.id; UI.cli.screen='track'; render(); });
 on('cli-repetir',function(d){
   var o=order(d.id); if(!o) return;
-  o.itens.forEach(function(i){ UI.cart.push(JSON.parse(JSON.stringify(i))); });
+  o.itens.forEach(function(i){ var c=JSON.parse(JSON.stringify(i)), p=prod(c.prodId); if(p){ c.foto=p.foto; c.cat=p.cat; c.hue=p.hue; } UI.cart.push(c); });
   var av=revalidarCarrinho();
   saveCliente(); UI.cli.screen='home'; render();
   toast(av.length?('Itens adicionados. '+av[0]):'Itens adicionados à sacola','ok');
@@ -1931,28 +2036,57 @@ on('cli-cancelar',function(d){
   var o=order(d.id); if(!o) return;
   if(['em_validacao','aguardando_comprovante','aguardando_aceite'].indexOf(o.status)<0){ toast('Não dá mais para cancelar','err'); return; }
   confirmar('Cancelar pedido?','O pedido '+o.id+' será cancelado.','Cancelar pedido',function(){
-    o.status='cancelado'; o.historico.unshift({t:nowHM(),who:'Cliente',act:'Cancelou o pedido'}); save(); toast('Pedido cancelado','info'); render();
+    if(!CLOUD){ o.status='cancelado'; o.historico.unshift({t:nowHM(),who:'Cliente',act:'Cancelou o pedido'}); save(); toast('Pedido cancelado','info'); render(); return; }
+    alterarMeuPedido_(o,'cancelar',{},'Pedido cancelado','Não dá mais para cancelar: o restaurante já começou o pedido.');
   },true);
 });
-on('cli-reenviar',function(d){ var o=order(d.id); if(!o) return; pickImage(function(u){ o.pay.comprovante=u; o.pay.status='enviado'; o.status='em_validacao'; o.historico.unshift({t:nowHM(),who:'Cliente',act:'Reenviou o comprovante'}); save(); toast('Comprovante reenviado','ok'); render(); }); });
+on('cli-reenviar',function(d){ var o=order(d.id); if(!o) return; pickImage(function(u){
+  if(!CLOUD){ o.pay.comprovante=u; o.pay.status='enviado'; o.status='em_validacao'; o.historico.unshift({t:nowHM(),who:'Cliente',act:'Reenviou o comprovante'}); save(); toast('Comprovante reenviado','ok'); render(); return; }
+  alterarMeuPedido_(o,'comprovante',{comprovante:u},'Comprovante reenviado','Esse pedido não aceita mais comprovante.');
+}); });
+// cancelar / reenviar comprovante do PRÓPRIO pedido: quem altera é o servidor (confere se o pedido é deste WhatsApp)
+function alterarMeuPedido_(o,acao,body,msgOk,msgNao){
+  apiCall('POST','/pedido/'+encodeURIComponent(o.id)+'/'+acao,body,true).then(function(res){
+    if(res.status===200 && res.json && res.json.pedido){
+      var srv=res.json.pedido; S.pedidos=S.pedidos.map(function(x){ return x.id===srv.id?srv:x; });
+      persistLocal(); toast(msgOk,acao==='cancelar'?'info':'ok'); render(); return;
+    }
+    if(res.status===409){ toast(msgNao,'err'); lastRev=null; cloudPull(); return; }
+    if(res.status===400){ toast('Imagem inválida. Tire um print do comprovante e tente de novo.','err'); return; }
+    toast('Sem conexão. Tente de novo em instantes.','err');
+  });
+}
 on('cli-login-f',function(d,t){ UI.login=UI.login||{}; UI.login[d.k]=t.value; });
 on('cli-login',function(){
   var L=UI.login||{}; var nome=(L.nome||'').trim().replace(/\s+/g,' '); var whats=(L.whats||'').trim();
   if(nome.split(' ').length<2 || nome.replace(/\s/g,'').length<3){ toast('Digite seu nome completo (nome e sobrenome)','err'); return; }
   if(!telValido(whats)){ toast('Digite um WhatsApp válido com DDD','err'); return; }
-  function entrarNovo(){ UI.me.nome=nome; UI.me.tel=whats; if(!Array.isArray(UI.me.enderecos))UI.me.enderecos=[]; persistLocal(); if(CLOUD) cloudCliUpsert(); UI.login=null; UI.cli.screen='home'; render(); toast('Cadastro feito! Bem-vindo, '+nome.split(' ')[0]+'!','ok'); }
+  function entrarNovo(){ UI.me.nome=nome; UI.me.tel=whats; if(!Array.isArray(UI.me.enderecos))UI.me.enderecos=[]; persistLocal(); UI.login=null; UI.cli.screen='home'; render(); toast('Cadastro feito! Bem-vindo, '+nome.split(' ')[0]+'!','ok'); }
   function entrarExistente(cli){ UI.me.nome=cli.nome||nome; UI.me.tel=whats; UI.me.foto=cli.foto||null; UI.me.enderecos=Array.isArray(cli.enderecos)?cli.enderecos:[]; persistLocal(); UI.login=null; UI.cli.screen='home'; render(); toast('Bem-vindo de volta, '+(UI.me.nome.split(' ')[0])+'!','ok'); }
   if(!CLOUD){ entrarNovo(); return; }
-  cloudCliGet(normWhats(whats)).then(function(cli){
-    if(cli && (cli.nome||'').trim()){
-      if(normNome(cli.nome)===normNome(nome)) entrarExistente(cli);
-      else toast('Esse WhatsApp já tem cadastro em outro nome. Confira o nome completo.','err');
-    } else entrarNovo();
+  // quem confere o WhatsApp + nome é o SERVIDOR (antes o app baixava o cadastro de qualquer número pra comparar)
+  cliLoginServidor_(whats,nome).then(function(g){
+    if(!g.ok){ toast(msgErroLoginCli_(g.erro),'err'); return; }
+    var cli=g.cliente||{};
+    S.pedidos=[]; lastRev=null;   // troca de conta: some com os pedidos da conta anterior
+    if(g.novo) entrarNovo(); else entrarExistente(cli);
+    cloudPull();
   });
 });
-on('cli-logout',function(){ confirmar('Sair da conta?','Seus dados continuam salvos. Você pode entrar de novo com o mesmo WhatsApp e nome.','Sair',function(){ UI.me={nome:'',tel:'',foto:null,enderecos:[]}; UI.cart=[]; UI.login=null; UI.cli.screen='home'; persistLocal(); render(); },false); });
+on('cli-logout',function(){ confirmar('Sair da conta?','Seus dados continuam salvos. Você pode entrar de novo com o mesmo WhatsApp e nome.','Sair',function(){ UI.me={nome:'',tel:'',foto:null,enderecos:[]}; UI.cart=[]; UI.login=null; UI.cli.screen='home'; S.pedidos=[]; try{ localStorage.removeItem(CLITOKKEY); localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){} persistLocal(); render(); },false); });
 on('me-f',function(d,t){ UI.me[d.k]=t.value; });
-on('me-salvar',function(){ saveCliente(); toast('Dados salvos','ok'); render(); });
+on('me-salvar',function(){
+  var s=cliTok_();
+  if(CLOUD && s && s.w!==telDig(UI.me.tel)){   // trocou o WhatsApp: entra com o número novo (o servidor confere o nome)
+    if(!telValido(UI.me.tel)){ toast('Digite um WhatsApp válido com DDD','err'); return; }
+    cliLoginServidor_(UI.me.tel,UI.me.nome).then(function(g){
+      if(!g.ok){ toast(msgErroLoginCli_(g.erro),'err'); return; }
+      S.pedidos=[]; lastRev=null; saveCliente(); cloudPull(); toast('Dados salvos','ok'); render();
+    });
+    return;
+  }
+  saveCliente(); toast('Dados salvos','ok'); render();
+});
 on('me-foto',function(){ pickImage(function(u){ UI.me.foto=u; saveCliente(); render(); toast('Foto de perfil atualizada','ok'); }); });
 on('me-endrm',function(d){ var i=+d.i; confirmar('Remover endereço?','','Remover',function(){ UI.me.enderecos.splice(i,1); saveCliente(); render(); },true); });
 on('me-endadd',function(){
@@ -1973,15 +2107,26 @@ on('me-endsave',function(){
    HANDLERS — ADMIN
    ============================================================================ */
 function needAdmin(){ if(!isAdmin()){ toast('Sem permissão para esta ação','err'); return false; } return true; }
+// LOGIN DO PAINEL: quem confere usuário e senha é o SERVIDOR (a senha não existe mais no app)
+var _entrando=false;
 on('adm-login',function(){
   var u=($('lg-user').value||'').trim().toLowerCase(), p=$('lg-pass').value;
-  var acc=S.equipe.filter(function(x){return x.user===u;})[0];
-  if(!acc || p!=='2903'){ toast('Usuário ou senha inválidos','err'); return; }
-  UI.adm.logged=true; UI.adm.user=acc; UI.adm.tab='visao'; UI.adm.order=null; UI.adm.mais=null;
-  salvarSessaoAdm_(acc);   // fica logado 24h neste aparelho (só a conta do dono)
-  audit('Entrou no painel',''); render(); pedirWakeLock_(); btpAutoReconnect_();
+  if(!u||!p){ toast('Digite usuário e senha','err'); return; }
+  if(_entrando) return; _entrando=true; toast('Entrando...','info');
+  apiCall('POST','/admin/login',{usuario:u,senha:p},false).then(function(res){
+    _entrando=false;
+    var r=res.json;
+    if(res.status===429){ toast('Muitas tentativas erradas. Aguarde '+Math.ceil(((r&&r.esperaSeg)||900)/60)+' min e tente de novo.','err'); return; }
+    if(res.status===0){ toast('Sem conexão com o servidor. Confira a internet.','err'); return; }
+    if(res.status!==200 || !r || !r.token){ toast('Usuário ou senha inválidos','err'); return; }
+    var acc={user:r.usuario,nome:r.nome,papel:r.papel};
+    salvarSessaoAdm_(acc,r.token,r.expira);   // fica logado neste aparelho (30 dias ou até sair)
+    UI.adm.logged=true; UI.adm.user=acc; UI.adm.tab='visao'; UI.adm.order=null; UI.adm.mais=null;
+    audit('Entrou no painel',''); render(); pedirWakeLock_(); btpAutoReconnect_();
+    lastRev=null; cloudPull();   // agora sim baixa os pedidos (só com login)
+  });
 });
-on('adm-logout',function(){ UI.adm.logged=false; UI.adm.user=null; UI.adm.order=null; UI.adm.mais=null; limparSessaoAdm_(); soltarWakeLock_(); render(); });
+on('adm-logout',function(){ apiPost('/admin/logout',{}); UI.adm.logged=false; UI.adm.user=null; UI.adm.order=null; UI.adm.mais=null; setTimeout(limparSessaoAdm_,300); soltarWakeLock_(); S.pedidos=[]; S.clientes=[]; try{ localStorage.removeItem(LSKEY); }catch(e){} render(); });
 on('adm-tab',function(d){ UI.adm.tab=d.t; UI.adm.order=null; UI.adm.mais=null; render(); scrollAdmTop(); });
 on('adm-kpi',function(d){ UI.adm.tab='pedidos'; UI.adm.filter=d.f; UI.adm.filterTipo='todos'; UI.adm.filterPay='todos'; UI.adm.filterDia='hoje'; UI.adm.order=null; UI.adm.mais=null; render(); });
 on('adm-filter',function(d){ UI.adm.filter=d.f; render(); });
@@ -2106,7 +2251,7 @@ function prodFormHTML(){
     return '<div class="soft"><div class="soft-head"><strong>'+esc(g.nome)+(g.max>0?' <span class="muted small2">(até '+g.max+')</span>':'')+'</strong><button class="ci-trash sm" data-action="pf-rm-grupo" data-g="'+gi+'" aria-label="Remover">'+ic('trash')+'</button></div>'+(itens||'<div class="muted small2 mb6">Sem itens</div>')+'<button class="btn btn-ghost btn-sm btn-block" data-action="pf-add-gitem" data-g="'+gi+'">'+ic('plus')+' Item</button></div>';
   }).join('');
   return '<h2>'+(novo?'Novo produto':'Editar produto')+'</h2>'+
-    '<div class="pf-imgwrap"><img id="pf-img" src="'+prodImg(p)+'"><div class="pf-imgbtns"><button class="btn btn-outline btn-sm" data-action="pf-foto">'+ic('camera')+' '+(p.foto?'Trocar foto':'Adicionar foto')+'</button>'+(p.foto?'<button class="btn btn-red btn-sm" data-action="pf-rm-foto">'+ic('trash')+' Remover foto</button>':'')+'</div></div>'+
+    '<div class="pf-imgwrap"><img id="pf-img" src="'+esc(prodImg(p))+'"><div class="pf-imgbtns"><button class="btn btn-outline btn-sm" data-action="pf-foto">'+ic('camera')+' '+(p.foto?'Trocar foto':'Adicionar foto')+'</button>'+(p.foto?'<button class="btn btn-red btn-sm" data-action="pf-rm-foto">'+ic('trash')+' Remover foto</button>':'')+'</div></div>'+
     '<div class="field"><label>Nome</label><input id="pf-nome" value="'+esc(p.nome)+'"></div>'+
     '<div class="field"><label>Descrição</label><textarea id="pf-desc">'+esc(p.desc)+'</textarea></div>'+
     '<div class="row2"><div class="field"><label>Preço base (R$)</label><input id="pf-preco" inputmode="decimal" value="'+esc(p.preco)+'"></div>'+
@@ -2227,16 +2372,14 @@ function initUI(){
     adm:{logged:false,user:null,tab:'visao',filter:'todos',filterTipo:'todos',filterPay:'todos',filterDia:'hoje',order:null,mais:null,relPer:'tudo',cliQ:'',cliFilter:'todos',_pedit:null} };
 }
 /* ---- Sessão do painel do DONO: fica salva 24h no aparelho pra a Fábia não deslogar toda hora ---- */
-var ADM_SESSAO_MS = 24*60*60*1000;  // 24 horas (mude aqui se quiser menos)
-function salvarSessaoAdm_(acc){ try{ if(acc && acc.papel==='admin') localStorage.setItem(ADMKEY, JSON.stringify({user:acc.user, exp:Date.now()+ADM_SESSAO_MS})); }catch(e){} }
+// A sessão é um token emitido pelo SERVIDOR depois de conferir a senha (vale 30 dias ou até sair). O servidor pode derrubá-la a qualquer hora.
+function salvarSessaoAdm_(acc,token,exp){ try{ localStorage.setItem(ADMKEY, JSON.stringify({user:acc.user, nome:acc.nome, papel:acc.papel, token:token, exp:exp||(Date.now()+30*864e5)})); }catch(e){} }
 function limparSessaoAdm_(){ try{ localStorage.removeItem(ADMKEY); }catch(e){} }
 function restaurarSessaoAdm_(){
   if(APP_MODE!=='admin' || (UI.adm&&UI.adm.logged)) return;
   var s=null; try{ s=JSON.parse(localStorage.getItem(ADMKEY)||'null'); }catch(e){}
-  if(!s || !s.user || !s.exp || Date.now()>s.exp){ if(s) limparSessaoAdm_(); return; }   // sem sessão ou expirou (24h) -> pede login
-  var acc=(S.equipe||[]).filter(function(x){return x.user===s.user && x.papel==='admin';})[0];  // só a conta do dono
-  if(!acc) return;
-  UI.adm.logged=true; UI.adm.user=acc; UI.adm.tab='visao';
+  if(!s || !s.token || !s.user || !s.exp || Date.now()>s.exp){ if(s) limparSessaoAdm_(); return; }   // sessão antiga (sem token) ou vencida -> pede login
+  UI.adm.logged=true; UI.adm.user={user:s.user,nome:s.nome||s.user,papel:s.papel||'atendente'}; UI.adm.tab='visao';
 }
 /* ---- Wake Lock: mantém a TELA ligada com o painel aberto (dono) pra o Android não matar a aba/impressora ---- */
 var _wakeLock=null;
@@ -2303,27 +2446,35 @@ function aplicarNuvem(row){
   var maxN=100; S.pedidos.forEach(function(p){ var n=parseInt(String(p.id).replace('#',''),10); if(n>maxN)maxN=n; }); if(maxN>seedCounter)seedCounter=maxN;
   return true;
 }
+// Pedidos DO CLIENTE: o servidor devolve só os deste WhatsApp (o cliente nunca baixa o estado geral)
+function aplicarMeusPedidos_(r){
+  if(!r || !Array.isArray(r.pedidos)) return false;
+  lastRev=r.rev||lastRev;
+  S.pedidos=r.pedidos;
+  try{ localStorage.setItem(LSKEY, JSON.stringify(cacheLeve_(S))); }catch(e){}
+  return true;
+}
 function cloudPull(){
   if(!CLOUD) return Promise.resolve();
   if(_pushing>0) return Promise.resolve();   // não puxo enquanto estou gravando o MEU estado (evita sobrescrever o pedido recém-criado)
-  // ECONOMIA DE BANDA: puxa só o 'rev' (poucos bytes). Só baixa o estado inteiro quando algo mudou.
+  if(APP_MODE==='admin' && !(UI.adm&&UI.adm.logged)) return Promise.resolve();   // painel sem login não baixa nada
+  if(APP_MODE!=='admin' && !(estaLogado() && cliToken_())) return Promise.resolve();
+  // ECONOMIA DE BANDA: puxa só o 'rev' (poucos bytes). Só baixa quando algo mudou.
   return apiGet('/estado/rev').then(function(r){
     if(_pushing>0) return;                    // um envio começou durante a checagem -> aborta antes de sobrescrever
     var rev = r && r.rev;
-    if(!rev || rev===lastRev) return;   // nada mudou -> não baixa o estado
-    return apiGet('/estado').then(function(r2){ if(_pushing>0) return; if(r2&&r2.data&&aplicarNuvem(r2)) render(); });
+    if(!rev || rev===lastRev) return;   // nada mudou -> não baixa
+    if(APP_MODE!=='admin') return apiGet('/meus-pedidos',true).then(function(m){ if(aplicarMeusPedidos_(m)) render(); });
+    return apiGet('/estado',true).then(function(r2){ if(_pushing>0) return; if(r2&&r2.data&&aplicarNuvem(r2)) render(); });
   });
 }
 function cloudSubscribe(){ /* sem realtime no VPS; o poll de 5s cobre a sincronização */ }
 function cloudBoot(){
   initUI(); seed(); load(); restaurarSessaoAdm_(); restoreChk(); render(); admOnReady_();   // pinta na hora com cache local; o VPS sobrescreve em seguida
-  refreshCliente();   // puxa a conta/endereços do cliente logado (ou cria a linha se ainda não existir)
-  apiGet('/estado').then(function(r){
-    if(r&&r.data&&r.data.produtos){ if(aplicarNuvem(r)) render(); }
-    else if(r && r.data===null && (r.rev===null||r.rev===undefined)){ cloudPush(); }  // banco GENUINAMENTE vazio (1ª vez) -> sobe o cardápio
-    // se r===null (falha de rede/servidor) NÃO faz nada: mantém o cache e o próximo cloudPull recupera.
-    // NUNCA subir o seed por cima da produção só porque a leitura falhou (foi o que zerou tudo em 29/09).
-  });
+  refreshCliente();   // garante o token do cliente logado e puxa a conta/endereços dele
+  // NUNCA sobe o seed/estado local pro servidor no boot (foi o que zerou tudo em 29/09). Só baixa.
+  if(APP_MODE==='admin'){ if(UI.adm.logged) apiGet('/estado',true).then(function(r){ if(r&&r.data&&r.data.produtos&&aplicarNuvem(r)) render(); }); }
+  else if(estaLogado()) garantirTokenCliente_(UI.me.tel,UI.me.nome).then(function(g){ if(g.ok) return apiGet('/meus-pedidos',true).then(function(m){ if(aplicarMeusPedidos_(m)) render(); }); });
   cloudSubscribe();
   pullCardapio();                 // cardápio na hora (canal leve)
   setInterval(cloudPull, 5000);   // pedidos: a cada 5s (puxa só o rev; baixa o estado só quando muda)
