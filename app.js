@@ -507,6 +507,25 @@ function qrDataUrl(txt){ try{ if(typeof qrcode==='undefined') return null; var q
 /* ============================ RENDER / DISPATCH ============================ */
 function ehNoite(){ return agoraMinLoja() >= 1080; }   // 18:00 em diante = jantar (preço de noite)
 function varPreco(v){ return (v && v.precoNoite!=null && ehNoite()) ? v.precoNoite : (v ? v.preco : 0); }
+/* ---- ACOMPANHAMENTOS DO DIA (v56): o que vai no "Completo" vem da categoria interna do painel (botões Almoço e Janta) ---- */
+var CAT_ACOMP_DIA='acompdia';
+function catInterna_(id){ var c=cat(id); return id===CAT_ACOMP_DIA || !!(c&&c.interna); }   // categoria que só o painel do dono vê
+function ehFeijao_(n){ return /feij/i.test(String(n||'')); }
+// lista do período atual (almoço até 17h59, janta das 18h em diante). null = categoria ainda não existe -> vale o texto fixo antigo
+function acompDia_(){
+  var itens=(S.produtos||[]).filter(function(p){ return p.cat===CAT_ACOMP_DIA; }).sort(function(a,b){ return (a.ordem||0)-(b.ordem||0); });
+  if(!itens.length) return null;
+  var per=ehNoite()?'janta':'almoco';
+  var on=itens.filter(function(p){ return !!p[per]; }).map(function(p){ return String(p.nome||'').trim(); });
+  return { lista:on.filter(function(n){ return !ehFeijao_(n); }), feijoes:on.filter(ehFeijao_), periodo:per };
+}
+// o que acompanha uma opção: o Completo do espetinho (v.feijao) segue a lista do dia; as demais usam o texto fixo do produto
+function inclusosDe_(v){
+  var d=(v&&v.feijao)?acompDia_():null;
+  if(d) return { lista:d.lista, feijoes:d.feijoes, dia:true };
+  return { lista:(v&&v.inclui)||[], feijoes:(v&&v.feijao)?(ehNoite()?[FEIJOES[0]]:FEIJOES.slice()):[], dia:false };
+}
+function feijaoEscolhido_(inc){ if(!inc||!inc.feijoes.length) return null; return inc.feijoes.indexOf(pdSel.feijao)>=0 ? pdSel.feijao : inc.feijoes[0]; }
 function normalizarCardapio(s){
   if(!s||!s.produtos) return;
   s.produtos.forEach(function(p){
@@ -634,17 +653,17 @@ function cliHome(){
 }
 function catsChips(){
   var q=(UI.cli.q||'').trim();
-  var cats=['Todos'].concat(catsOrd().filter(function(c){return !c.oculta;}).map(function(c){return c.nome;}));
+  var cats=['Todos'].concat(catsOrd().filter(function(c){return !c.oculta && !catInterna_(c.id);}).map(function(c){return c.nome;}));
   return cats.map(function(c){ return '<button class="chip '+((!q&&UI.cli.cat===c)?'on':'')+'" data-action="cli-cat" data-c="'+esc(c)+'">'+esc(c)+'</button>'; }).join('');
 }
 function menuInner(){
   var q=(UI.cli.q||'').trim().toLowerCase();
-  var vis=S.produtos.filter(function(p){ return p.disp!=='oculto' && !(cat(p.cat)&&cat(p.cat).oculta); });
+  var vis=S.produtos.filter(function(p){ return p.disp!=='oculto' && !(cat(p.cat)&&cat(p.cat).oculta) && !catInterna_(p.cat); });
   if(q){ vis=vis.filter(function(p){return (p.nome+' '+p.desc).toLowerCase().indexOf(q)>=0;});
     return vis.length? '<div class="grid">'+vis.map(prodCard).join('')+'</div>' : '<div class="empty">'+ic('search','big')+'Nada encontrado.</div>'; }
   var out='';
   catsOrd().forEach(function(c){
-    if(c.oculta) return;
+    if(c.oculta || catInterna_(c.id)) return;
     if(UI.cli.cat!=='Todos'&&UI.cli.cat!==c.nome) return;
     var items=vis.filter(function(p){return p.cat===c.id;}).sort(function(a,b){return a.ordem-b.ordem;});
     if(!items.length) return;
@@ -684,7 +703,7 @@ function pdTotal(p){ return (pdBase(p)+pdAdicTotal(p))*pdSel.qty; }
 function grpSum(gi){ var sel=pdSel.g[gi]||{}, s=0; Object.keys(sel).forEach(function(k){ s+=sel[k]; }); return s; }
 // adicional indisponível = existe um produto (acompanhamento) com o mesmo nome marcado como ESGOTADO no cardápio
 function normAcomp_(s){ return foldAscii(String(s||'')).toLowerCase().trim(); }
-function adicEsgotado_(nome){ var n=normAcomp_(nome); return (S.produtos||[]).some(function(p){ return p.disp==='esgotado' && normAcomp_(p.nome)===n; }); }
+function adicEsgotado_(nome){ var n=normAcomp_(nome); return (S.produtos||[]).some(function(p){ return p.cat!==CAT_ACOMP_DIA && p.disp==='esgotado' && normAcomp_(p.nome)===n; }); }
 function pdHTML(p){
   var vars=pdVars(p), varSel = vars ? vars[pdSel.varIdx] : null;
   var h='<img class="pd-img" src="'+esc(prodImg(p))+'" alt="">'+
@@ -695,14 +714,14 @@ function pdHTML(p){
       vars.map(function(v,i){ var sel=pdSel.varIdx===i;
         return '<div class="opt'+(sel?' sel':'')+'" data-action="pd-var" data-v="'+i+'"><span class="ck">'+(sel?ic('check'):'')+'</span><span class="oname">'+esc(v.nome)+'</span><span class="oprice">'+money(varPreco(v))+'</span></div>';
       }).join('')+'</div>';
-    if(varSel && varSel.inclui && varSel.inclui.length){
-      var acomp=varSel.inclui.slice(); if(varSel.feijao) acomp=acomp.concat([ehNoite()?'Feijão tropeiro':(pdSel.feijao||FEIJOES[0])]);
+    var inc=varSel?inclusosDe_(varSel):null, fsel=feijaoEscolhido_(inc);
+    if(inc && (inc.lista.length || fsel)){
+      var acomp=inc.lista.concat(fsel?[fsel]:[]);
       h+='<div class="incl">'+ic('checkc')+'<div><strong>Acompanha:</strong> '+acomp.map(esc).join(', ')+'.</div></div>';
     }
-    if(varSel && varSel.feijao && !ehNoite()){   // à noite (janta, 18h+) vai só feijão tropeiro, sem escolha
-      var fsel=pdSel.feijao||FEIJOES[0];
+    if(inc && inc.feijoes.length>1){   // só pergunta o feijão quando há mais de um ligado no período (à noite costuma ser só o tropeiro)
       h+='<div class="grp"><div class="grp-head"><strong>Escolha o feijão</strong><span class="grp-max">obrigatório</span></div>'+
-        FEIJOES.map(function(f){ var s=fsel===f; return '<div class="opt'+(s?' sel':'')+'" data-action="pd-feijao" data-f="'+esc(f)+'"><span class="ck">'+(s?ic('check'):'')+'</span><span class="oname">'+esc(f)+'</span></div>'; }).join('')+'</div>';
+        inc.feijoes.map(function(f){ var s=fsel===f; return '<div class="opt'+(s?' sel':'')+'" data-action="pd-feijao" data-f="'+esc(f)+'"><span class="ck">'+(s?ic('check'):'')+'</span><span class="oname">'+esc(f)+'</span></div>'; }).join('')+'</div>';
     }
   }
   if(p.sabores && p.sabores.length){
@@ -1551,12 +1570,13 @@ on('adm-fechar-caixa',function(d){ imprimirFechamento(hoje(), d.p==='janta'?'jan
 /* Cardápio (admin) */
 function admCardapio(){
   var admin=isAdmin();
-  var h='<div class="pagehead"><h2>Cardápio</h2><p>'+S.produtos.filter(function(p){return p.disp!=='oculto';}).length+' produtos ativos</p></div>';
+  var h='<div class="pagehead"><h2>Cardápio</h2><p>'+S.produtos.filter(function(p){return p.disp!=='oculto' && !catInterna_(p.cat);}).length+' produtos ativos</p></div>';
   if(admin) h+='<div class="row2"><button class="btn btn-primary" data-action="adm-novo-produto">'+ic('plus')+' Novo produto</button><button class="btn btn-ghost" data-action="adm-mais" data-m="categorias">'+ic('tag')+' Categorias</button></div><div class="sp-sm"></div>';
   else h+='<div class="notice info">'+ic('info')+'<div>Você (atendente) pode ligar/desligar a venda do dia. Preço, foto e cadastro são com o dono.</div></div>';
   catsOrd().forEach(function(c){
     var items=S.produtos.filter(function(p){return p.cat===c.id;}).sort(function(a,b){return a.ordem-b.ordem;});
     if(!items.length) return;
+    if(catInterna_(c.id)){ h+=admAcompDia_(c,items); return; }
     h+='<div class="adm-sec-t">'+esc(c.nome)+' ('+items.length+')'+(c.oculta?' · <span class="tag">oculta</span>':'')+'</div>';
     h+='<div class="padm-grid">'+items.map(function(p){
       var on=p.disp==='disponivel';
@@ -1567,10 +1587,25 @@ function admCardapio(){
   });
   return h;
 }
+// Acompanhamentos do Completo: cada item tem um botão para o ALMOÇO e outro para a JANTA. O app do cliente troca sozinho às 18h.
+function admAcompDia_(c,items){
+  var d=acompDia_(), noite=ehNoite();
+  var agora=d?d.lista.concat(d.feijoes.length>1?[d.feijoes.join(' ou ')]:d.feijoes):[];
+  var h='<div class="adm-sec-t">'+esc(c.nome)+' ('+items.length+') · <span class="tag">só o dono vê</span></div>'+
+    '<div class="notice info left">'+ic('info')+'<div>O que estiver ligado aparece em <strong>"Acompanha"</strong> quando o cliente escolhe o <strong>Completo</strong>. O app troca sozinho do almoço para a janta às 18h.<br><strong>Agora ('+(noite?'janta':'almoço')+') o cliente vê:</strong> '+(agora.length?esc(agora.join(', ')):'nenhum acompanhamento ligado')+'.</div></div>';
+  h+='<div class="acd"><div class="acd-row acd-head"><span>Acompanhamento</span><span class="'+(noite?'':'agora')+'">Almoço</span><span class="'+(noite?'agora':'')+'">Janta</span></div>'+
+    items.map(function(p){
+      return '<div class="acd-row"><div class="pa-n">'+esc(p.nome)+'</div>'+
+        '<div class="switch'+(p.almoco?' on':'')+'" data-action="adm-acd" data-id="'+p.id+'" data-per="almoco" role="button" aria-label="'+esc(p.nome)+' no almoço"></div>'+
+        '<div class="switch'+(p.janta?' on':'')+'" data-action="adm-acd" data-id="'+p.id+'" data-per="janta" role="button" aria-label="'+esc(p.nome)+' na janta"></div></div>';
+    }).join('')+'</div>';
+  return h;
+}
 function admCategorias(){
   var cs=catsOrd();
   var h='<div class="pagehead"><h2>Categorias</h2><p>Organize as seções do cardápio</p></div>';
   h+=cs.map(function(c,i){
+    if(catInterna_(c.id)) return '<div class="padm"><div class="pa-b"><div class="pa-n">'+esc(c.nome)+' <span class="tag">só o dono vê</span></div><div class="pa-p muted">Define o que acompanha o Completo no almoço e na janta. Ajuste na aba Cardápio.</div></div></div>';
     return '<div class="padm"><div class="pa-b"><div class="pa-n">'+esc(c.nome)+(c.oculta?' <span class="tag">oculta</span>':'')+'</div><div class="pa-p muted">'+S.produtos.filter(function(p){return p.cat===c.id;}).length+' produto(s)</div></div>'+
       '<div class="cat-actions">'+
       '<button class="btn btn-sm btn-ghost" data-action="cat-up" data-id="'+c.id+'" aria-label="Subir"'+(i===0?' disabled':'')+'>'+ic('back','rot90')+'</button>'+
@@ -1782,11 +1817,11 @@ function patchPd(){ var p=prod(UI._pdId); if(!p) return; var m=document.querySel
 on('pd-add',function(d){
   var p=prod(d.id); if(!p) return;
   var vars=pdVars(p), varNome='', inclui=[], base=p.preco;
-  if(vars){ if(pdSel.varIdx<0){ toast('Escolha uma opção','err'); return; } var v=vars[pdSel.varIdx]; varNome=v.nome; inclui=v.inclui||[]; base=varPreco(v); }
+  if(vars){ if(pdSel.varIdx<0){ toast('Escolha uma opção','err'); return; } var v=vars[pdSel.varIdx]; varNome=v.nome; inclui=inclusosDe_(v).lista.slice(); base=varPreco(v); }
   var adics=[];
   (p.grupos||[]).forEach(function(gr,gi){ var sel=pdSel.g[gi]||{}; gr.itens.forEach(function(it,ii){ var q=sel[ii]||0; if(q>0 && !adicEsgotado_(it.nome)) adics.push({nome:it.nome,preco:it.preco,qty:q}); }); });
   var unit=base+adics.reduce(function(a,x){return a+x.preco*x.qty;},0);
-  var feijao=(vars&&vars[pdSel.varIdx]&&vars[pdSel.varIdx].feijao)?(ehNoite()?'Feijão tropeiro':(pdSel.feijao||FEIJOES[0])):null;
+  var feijao=(vars&&vars[pdSel.varIdx])?feijaoEscolhido_(inclusosDe_(vars[pdSel.varIdx])):null;
   var sabor=(p.sabores&&p.sabores.length)?(pdSel.sabor||p.sabores[0]):null;
   var item={prodId:p.id,nome:p.nome,cat:p.cat,hue:p.hue,foto:p.foto,base:base,varNome:varNome,inclui:inclui,adics:adics,feijao:feijao,sabor:sabor,qty:pdSel.qty,obs:pdSel.obs,preco:unit};
   if(pdSel.edit!=null){ UI.cart[pdSel.edit]=item; toast('Item atualizado','ok'); }
@@ -2216,6 +2251,16 @@ function pedirMotivo(titulo,ops,cb){
 /* cardápio */
 on('adm-novo-produto',function(){ if(!needAdmin())return; openProdForm(null); });
 on('adm-edit-produto',function(d){ if(!needAdmin())return; openProdForm(prod(d.id)); });
+on('adm-acd',function(d){
+  var p=prod(d.id); if(!p){ toast('Item não encontrado','err'); return; }
+  var per=d.per==='janta'?'janta':'almoco';
+  p[per]=!p[per];
+  var ligado=p[per], nome=p.nome;
+  render();
+  toast(nome+' · '+(per==='janta'?'janta':'almoço')+': '+(ligado?'acompanha o Completo':'fora do Completo'),'info');
+  audit((ligado?'Ligou ':'Desligou ')+nome+' no Completo ('+(per==='janta'?'janta':'almoço')+')','');
+  Promise.resolve(saveCfg()).then(function(ok){ if(ok===false) toast('Sem conexão: a mudança NÃO foi salva. Tente de novo.','err'); });
+});
 on('adm-toggle-disp',function(d){
   var p=prod(d.id); if(!p){ toast('Produto não encontrado','err'); return; }
   p.disp=(p.disp==='disponivel')?'esgotado':'disponivel';
