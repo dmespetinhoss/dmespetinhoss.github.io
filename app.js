@@ -835,7 +835,7 @@ function resumoValores(){
 function cliPagamento(){
   var c=UI.chk;
   var h=backCli('dados')+'<div class="pagehead"><h2>Pagamento</h2><p>Escolha como pagar.</p></div>';
-  var pixAuto = PIX_AUTO && !c.pixManual;
+  var pixAuto = PIX_AUTO;   // com servidor, Pix é SEMPRE o do Mercado Pago (a chave fixa só aparece no modo sem servidor)
   var opts=[];
   if(S.loja.aceitaPix) opts.push(['pix','pix',(pixAuto?'Pix (pague na hora)':'Pix com comprovante'),(pixAuto?'Pague pelo Pix no app e o pedido entra na hora':'Pague pelo Pix e anexe o comprovante')]);
   if(S.loja.aceitaDinheiro) opts.push(['dinheiro','cash','Dinheiro',(c.modo==='delivery'?'Na entrega':'Na retirada')]);
@@ -1875,7 +1875,7 @@ on('chk-copiapix',function(){ var code=pixAtual().code; try{ navigator.clipboard
 on('chk-upload',function(){ pickImage(function(u){ UI.chk.comprov=u; render(); toast('Comprovante anexado','ok'); }); });
 on('chk-finalizar',function(){
   var c=UI.chk;
-  var pixAuto = PIX_AUTO && c.pay==='pix' && !c.pixManual;
+  var pixAuto = PIX_AUTO && c.pay==='pix';
   if(!lojaAberta()){ toast('Infelizmente estamos fechado no momento','err'); return; }
   if(!c.pay){ toast('Escolha a forma de pagamento','err'); return; }
   if(c.pay==='pix' && !pixAuto && !c.comprov){ toast('Anexe o comprovante do Pix','err'); return; }
@@ -1914,8 +1914,10 @@ function iniciarPixAuto(){
     if(res.status===-1){ UI.pix=null; UI.cli.screen='dados'; render(); toast(msgErroLoginCli_(r&&r.error),'err'); return; }
     if(recusaPedido_(res)){ UI.pix=null; return; }
     if(!r || !r.ok || !r.mp_id){
-      UI.pix=null; c.pixManual=true; UI.cli.screen='pagamento'; render();
-      toast('Não consegui gerar o Pix automático agora. Use o Pix com comprovante abaixo.','err');
+      // NÃO cai mais no Pix com a chave fixa (ia pra Caixa e o pedido podia não chegar): fica no Pix do Mercado Pago e tenta de novo
+      UI.pix=null; UI.cli.screen='pagamento'; render();
+      toast(res.status===0 ? 'Sem conexão: o Pix não foi gerado e nada foi cobrado. Confira a internet e toque em "Gerar Pix e pagar" de novo.'
+                           : 'Não consegui gerar o Pix agora. Tente de novo em instantes ou escolha dinheiro ou cartão.','err');
       return;
     }
     UI.pix={ status:'aguardando', mp_id:r.mp_id, copia:r.copia_e_cola||'', qr:(r.qr_base64?('data:image/png;base64,'+r.qr_base64):''), valor:r.valor||ped.total, expira:r.expira, t0:Date.now() };
