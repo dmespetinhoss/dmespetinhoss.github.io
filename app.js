@@ -584,7 +584,7 @@ function confirmar(titulo,texto,acaoLabel,cb,perigo){
 function cliLogin(){
   var L=UI.login||{};
   return '<div class="stage cli login-stage"><div class="scroll"><div class="login-wrap">'+
-    '<img class="login-logo" src="assets/logo-dm.jpg" alt="DM Espetinho">'+
+    '<img class="login-logo" src="assets/logo-dm-nova.jpg" alt="DM Espetinho">'+
     '<h1 class="login-tt">DM Espetinho</h1>'+
     '<p class="login-sub">Entre com seu WhatsApp para pedir e salvar seus endereços. Primeiro acesso? A gente cria sua conta na hora.</p>'+
     '<div class="card">'+
@@ -621,7 +621,7 @@ function cliTop(cur){
   var l=S.loja, navCur=(['home','carrinho','pedidos','perfil'].indexOf(cur)>=0)?cur:'home';
   var nav=CLI_TABS.map(function(t){ var b=(t[0]==='carrinho'&&cartCount()>0)?'<span class="dn-badge">'+cartCount()+'</span>':'';
     return '<button class="dn-item'+(navCur===t[0]?' on':'')+'" data-action="cli-go" data-s="'+t[0]+'">'+ic(t[1])+'<span>'+t[2]+'</span>'+b+'</button>'; }).join('');
-  return '<div class="topbar"><img class="logo" src="assets/logo-dm.jpg" alt="DM Espetinho">'+
+  return '<div class="topbar"><img class="logo" src="assets/logo-dm-nova.jpg" alt="DM Espetinho">'+
     '<div class="tb-id"><div class="tb-tt">'+esc(l.nome)+'</div>'+
     '<div class="tb-sub"><span class="dot '+(lojaAberta()?'on':'off')+'"></span>'+(lojaAberta()?'Aberto agora':'Fechado agora')+'</div></div>'+
     '<nav class="desktop-nav">'+nav+'</nav>'+
@@ -639,7 +639,7 @@ function cliHome(){
   var h='<div class="hero"><div class="hero-tx"><div class="eyebrow">'+ic('pin')+' Breu Branco / PA</div>'+
      '<h1>'+esc(l.nome)+'</h1><p>Espetinhos na brasa, lanches e porções. Peça e receba em casa.</p>'+
      '<div class="storebar"><span class="dot '+(lojaAberta()?'on':'off')+'"></span>'+(lojaAberta()?'Aberto · '+esc(l.horario):'Fechado agora · '+esc(l.horario))+'</div></div>'+
-     '<img class="hero-logo" src="assets/logo-dm.jpg" alt=""></div>';
+     '<img class="hero-logo" src="assets/logo-dm-nova.jpg" alt=""></div>';
   if(!lojaAberta()) h+='<div class="notice warn">'+ic('clock')+'<div>A loja está <strong>fechada agora</strong>. Você pode ver o cardápio e montar o pedido; a finalização abre no horário: '+esc(l.horario)+'.</div></div><div class="sp"></div>';
   if(l.banner) h+='<div class="banner">'+ic('gift')+' '+esc(l.banner)+'</div>';
   var promos=(S.promos||[]).filter(function(p){return p.ativo;});
@@ -1053,7 +1053,7 @@ function viewAdmin(){
 }
 function admSemPermissao(){ return '<div class="empty">'+ic('lock','big')+'Este módulo é exclusivo do dono.</div>'; }
 function admLogin(){
-  return '<div class="login"><img class="l-logo" src="assets/logo-dm.jpg" alt=""><h1>DM Espetinho · Painel</h1>'+
+  return '<div class="login"><img class="l-logo" src="assets/logo-dm-nova.jpg" alt=""><h1>DM Espetinho · Painel</h1>'+
     '<p>Acesso exclusivo do dono e da equipe.</p>'+
     '<div class="l-form"><div class="field"><label>Usuário</label><input id="lg-user" placeholder="Usuário" autocomplete="username"></div>'+
     '<div class="field"><label>Senha</label><input id="lg-pass" type="password" placeholder="Senha" autocomplete="current-password"></div>'+
@@ -1061,7 +1061,7 @@ function admLogin(){
 }
 function admTop(){
   var pend=S.pedidos.filter(function(p){return ['em_validacao','aguardando_aceite'].indexOf(p.status)>=0 && p.dia===hoje();}).length;
-  return '<div class="topbar"><img class="logo" src="assets/logo-dm.jpg" alt="">'+
+  return '<div class="topbar"><img class="logo" src="assets/logo-dm-nova.jpg" alt="">'+
     '<div class="tb-id"><div class="tb-tt">DM Espetinho</div><div class="tb-sub">'+esc(UI.adm.user.nome)+' · '+(isAdmin()?'Dono':'Atendente')+'</div></div>'+
     '<div class="tb-right"><button class="iconbtn" data-action="adm-tab" data-t="pedidos" aria-label="Pedidos pendentes">'+ic('bell')+(pend?'<span class="badge">'+pend+'</span>':'')+'</button>'+
     '<button class="iconbtn" data-action="adm-logout" aria-label="Sair" title="Sair">'+ic('logout')+'</button></div></div>';
@@ -1779,7 +1779,7 @@ on('adm-trocar-senha',function(){
 function admMarca(){
   var l=S.loja;
   return '<div class="pagehead"><h2>Marca</h2></div>'+
-    '<div class="card"><div class="mk-logo-wrap"><img id="mk-logo" src="assets/logo-dm.jpg" alt=""><button class="btn btn-outline btn-sm" data-action="adm-trocar-logo">'+ic('camera')+' Trocar logo</button></div>'+
+    '<div class="card"><div class="mk-logo-wrap"><img id="mk-logo" src="assets/logo-dm-nova.jpg" alt=""><button class="btn btn-outline btn-sm" data-action="adm-trocar-logo">'+ic('camera')+' Trocar logo</button></div>'+
     '<div class="field" style="margin-top:12px"><label>Nome exibido</label><input id="mk-nome" value="'+esc(l.nome)+'"></div>'+
     '<div class="field"><label>Banner promocional (texto)</label><input id="mk-banner" value="'+esc(l.banner)+'" placeholder="Ex.: Peça pelo app e ganhe brinde"></div>'+
     '<div class="field"><label>Endereço</label><input id="mk-end" value="'+esc(l.endereco)+'"></div>'+
