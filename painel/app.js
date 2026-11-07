@@ -201,7 +201,7 @@ function seed(){
     {id:'bebida',nome:'Bebidas',ordem:8,oculta:false}
   ];
   S = {
-    loja:{ nome:'DM Espetinho', pausado:false, janelas:[['11:00','14:00'],['18:00','23:00']], horario:'Ter a Dom · 11h-14h e 18h-23h',
+    loja:{ nome:'DM Espetinho', pausado:false, janelas:[['11:00','14:00'],['18:00','23:00']], horario:'Seg a Dom · 11h-14h e 18h-23h',
       endereco:'Av. Getúlio Vargas, em frente à Pague Menos', whats:'(63) 99279-1748',
       instagram:'@Dm_Espetinho_Distribuidora',
       pixKey:'01802000119', pixNome:'Denis Moreira de Bastos', pixCidade:'BREU BRANCO', banner:'',
@@ -458,7 +458,7 @@ function agoraMinLoja(){
     var p=s.split(':'); return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0);
   }catch(e){ var d=new Date(); return d.getHours()*60+d.getMinutes(); }
 }
-var DIAS_SEMANA_FECHADOS = [1];       // dias da semana SEMPRE fechados (0=dom,1=seg,...). Denis fecha toda SEGUNDA (funciona Ter-Dom).
+var DIAS_SEMANA_FECHADOS = [];        // dias da semana SEMPRE fechados (0=dom,1=seg,...). Desde 07/11/2026 abre todo dia (Seg a Dom); antes fechava a segunda ([1]).
 var DIAS_FECHADOS = [];               // dias fechados PONTUAIS (ISO, fuso Belém) — feriados/folgas avulsas. Ex.: '2026-12-25'.
 function hojeISO_(){ try{ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Belem',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); }catch(e){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); } }
 function diaSemanaLoja(){ try{ var s=new Intl.DateTimeFormat('en-US',{timeZone:'America/Belem',weekday:'short'}).format(new Date()); return {Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6}[s]; }catch(e){ return new Date().getDay(); } }
@@ -475,7 +475,7 @@ function lojaAberta(){
   return false;
 }
 function fmtHora(s){ var p=String(s).split(':'); var mm=p[1]||'00'; return mm==='00'?(parseInt(p[0],10)+'h'):(parseInt(p[0],10)+'h'+mm); }
-function fmtJanelas(js){ js=js||janelasLoja(); return 'Ter a Dom · '+js.map(function(w){return fmtHora(w[0])+'-'+fmtHora(w[1]);}).join(' e '); }
+function fmtJanelas(js){ js=js||janelasLoja(); return 'Seg a Dom · '+js.map(function(w){return fmtHora(w[0])+'-'+fmtHora(w[1]);}).join(' e '); }
 var _lastOpen=null;
 function clockWatch(){ try{ var o=lojaAberta(); if(_lastOpen===null){ _lastOpen=o; } else if(o!==_lastOpen){ _lastOpen=o; render(); } }catch(e){} }
 function descontoValor(sub){ return UI.cupom&&UI.cupom.pct ? Math.round(sub*UI.cupom.pct*100)/100 : 0; }
