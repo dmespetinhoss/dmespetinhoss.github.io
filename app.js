@@ -511,21 +511,24 @@ function varPreco(v){ return (v && v.precoNoite!=null && ehNoite()) ? v.precoNoi
 var CAT_ACOMP_DIA='acompdia';
 function catInterna_(id){ var c=cat(id); return id===CAT_ACOMP_DIA || !!(c&&c.interna); }   // categoria que só o painel do dono vê
 function ehFeijao_(n){ return /feij/i.test(String(n||'')); }
+// v60: arroz também é escolha (Arroz branco ou Baião de dois). O baião só fica ligado na janta, pelo botão do painel.
+function ehArroz_(n){ return /^\s*arroz|bai[aã]o/i.test(String(n||'')); }
 // lista do período atual (almoço até 17h59, janta das 18h em diante). null = categoria ainda não existe -> vale o texto fixo antigo
 function acompDia_(){
   var itens=(S.produtos||[]).filter(function(p){ return p.cat===CAT_ACOMP_DIA; }).sort(function(a,b){ return (a.ordem||0)-(b.ordem||0); });
   if(!itens.length) return null;
   var per=ehNoite()?'janta':'almoco';
   var on=itens.filter(function(p){ return !!p[per]; }).map(function(p){ return String(p.nome||'').trim(); });
-  return { lista:on.filter(function(n){ return !ehFeijao_(n); }), feijoes:on.filter(ehFeijao_), periodo:per };
+  return { lista:on.filter(function(n){ return !ehFeijao_(n) && !ehArroz_(n); }), arrozes:on.filter(ehArroz_), feijoes:on.filter(ehFeijao_), periodo:per };
 }
 // o que acompanha uma opção: o Completo do espetinho (v.feijao) segue a lista do dia; as demais usam o texto fixo do produto
 function inclusosDe_(v){
   var d=(v&&v.feijao)?acompDia_():null;
-  if(d) return { lista:d.lista, feijoes:d.feijoes, dia:true };
-  return { lista:(v&&v.inclui)||[], feijoes:(v&&v.feijao)?(ehNoite()?[FEIJOES[0]]:FEIJOES.slice()):[], dia:false };
+  if(d) return { lista:d.lista, arrozes:d.arrozes, feijoes:d.feijoes, dia:true };
+  return { lista:(v&&v.inclui)||[], arrozes:[], feijoes:(v&&v.feijao)?(ehNoite()?[FEIJOES[0]]:FEIJOES.slice()):[], dia:false };
 }
 function feijaoEscolhido_(inc){ if(!inc||!inc.feijoes.length) return null; return inc.feijoes.indexOf(pdSel.feijao)>=0 ? pdSel.feijao : inc.feijoes[0]; }
+function arrozEscolhido_(inc){ if(!inc||!inc.arrozes||!inc.arrozes.length) return null; return inc.arrozes.indexOf(pdSel.arroz)>=0 ? pdSel.arroz : inc.arrozes[0]; }
 function normalizarCardapio(s){
   if(!s||!s.produtos) return;
   s.produtos.forEach(function(p){
@@ -692,9 +695,9 @@ function abrirProduto(id, editIdx){
   var vars=pdVars(p);
   if(editIdx!=null && UI.cart[editIdx]){ var it=UI.cart[editIdx];
     var vi = vars ? Math.max(0, vars.map(function(v){return v.nome;}).indexOf(it.varNome)) : -1;
-    pdSel={qty:it.qty, varIdx:vi, g:{}, obs:it.obs||'', edit:editIdx, feijao:it.feijao||null, sabor:it.sabor||null};
+    pdSel={qty:it.qty, varIdx:vi, g:{}, obs:it.obs||'', edit:editIdx, feijao:it.feijao||null, arroz:it.arroz||null, sabor:it.sabor||null};
     (p.grupos||[]).forEach(function(gr,gi){ pdSel.g[gi]={}; gr.itens.forEach(function(gt,ii){ var f=(it.adics||[]).filter(function(a){return a.nome===gt.nome;})[0]; if(f) pdSel.g[gi][ii]=f.qty; }); });
-  } else { pdSel={qty:1, varIdx: vars?0:-1, g:{}, obs:'', edit:null, feijao:null, sabor:null}; }
+  } else { pdSel={qty:1, varIdx: vars?0:-1, g:{}, obs:'', edit:null, feijao:null, arroz:null, sabor:null}; }
   UI._pdId=id; modal(pdHTML(p));
 }
 function pdBase(p){ var vars=pdVars(p); return vars ? varPreco(vars[pdSel.varIdx]) : p.preco; }
@@ -714,10 +717,14 @@ function pdHTML(p){
       vars.map(function(v,i){ var sel=pdSel.varIdx===i;
         return '<div class="opt'+(sel?' sel':'')+'" data-action="pd-var" data-v="'+i+'"><span class="ck">'+(sel?ic('check'):'')+'</span><span class="oname">'+esc(v.nome)+'</span><span class="oprice">'+money(varPreco(v))+'</span></div>';
       }).join('')+'</div>';
-    var inc=varSel?inclusosDe_(varSel):null, fsel=feijaoEscolhido_(inc);
-    if(inc && (inc.lista.length || fsel)){
-      var acomp=inc.lista.concat(fsel?[fsel]:[]);
+    var inc=varSel?inclusosDe_(varSel):null, fsel=feijaoEscolhido_(inc), asel=arrozEscolhido_(inc);
+    if(inc && (inc.lista.length || fsel || asel)){
+      var acomp=(asel?[asel]:[]).concat(inc.lista, fsel?[fsel]:[]);
       h+='<div class="incl">'+ic('checkc')+'<div><strong>Acompanha:</strong> '+acomp.map(esc).join(', ')+'.</div></div>';
+    }
+    if(inc && inc.arrozes && inc.arrozes.length>1){   // v60: só pergunta quando há mais de um ligado (o baião de dois fica só na janta)
+      h+='<div class="grp"><div class="grp-head"><strong>Escolha o arroz</strong><span class="grp-max">obrigatório</span></div>'+
+        inc.arrozes.map(function(f){ var s=asel===f; return '<div class="opt'+(s?' sel':'')+'" data-action="pd-arroz" data-f="'+esc(f)+'"><span class="ck">'+(s?ic('check'):'')+'</span><span class="oname">'+esc(f)+'</span></div>'; }).join('')+'</div>';
     }
     if(inc && inc.feijoes.length>1){   // só pergunta o feijão quando há mais de um ligado no período (à noite costuma ser só o tropeiro)
       h+='<div class="grp"><div class="grp-head"><strong>Escolha o feijão</strong><span class="grp-max">obrigatório</span></div>'+
@@ -751,6 +758,7 @@ function cartSubtotal(){ return UI.cart.reduce(function(a,i){return a+i.preco*i.
 function itemLines(it){
   var lines=[];
   if(it.varNome) lines.push(it.varNome);
+  if(it.arroz) lines.push(it.arroz);
   if(it.feijao) lines.push(it.feijao);
   if(it.sabor) lines.push(it.sabor);
   (it.adics||[]).forEach(function(a){ lines.push((a.qty>1?a.qty+'x ':'+ ')+a.nome); });
@@ -1269,7 +1277,7 @@ function admAcoes(o){
 function cupomHTML(o,reimp){
   var itens=o.itens.map(function(i){
     var base=[]; if(i.varNome) base.push(i.varNome); (i.adics||[]).forEach(function(a){ base.push((a.qty>1?a.qty+'x ':'+ ')+a.nome); });
-    var obs=[]; if(i.feijao) obs.push(i.feijao); if(i.sabor) obs.push(i.sabor); if(i.obs) obs.push(i.obs);
+    var obs=[]; if(i.arroz) obs.push(i.arroz); if(i.feijao) obs.push(i.feijao); if(i.sabor) obs.push(i.sabor); if(i.obs) obs.push(i.obs);
     return '<div class="tk-l"><span>'+i.qty+'x '+esc(i.nome)+'</span><span>'+money(i.preco*i.qty)+'</span></div>'+
       (base.length?'<div class="tk-obs">'+esc(base.join(' · '))+'</div>':'')+
       (obs.length?'<div class="tk-obs"><strong>OBS:</strong> '+esc(obs.join(' · '))+'</div>':'');
@@ -1377,7 +1385,7 @@ function escposCupom(o,reimp){
   txt(SEP); nl();
   (o.itens||[]).forEach(function(i){
     var base=[]; if(i.varNome) base.push(i.varNome); (i.adics||[]).forEach(function(a){ base.push((a.qty>1?a.qty+'x ':'+ ')+a.nome); });
-    var obs=[]; if(i.feijao) obs.push(i.feijao); if(i.sabor) obs.push(i.sabor); if(i.obs) obs.push(i.obs);
+    var obs=[]; if(i.arroz) obs.push(i.arroz); if(i.feijao) obs.push(i.feijao); if(i.sabor) obs.push(i.sabor); if(i.obs) obs.push(i.obs);
     bold(true); txt(ln2(i.qty+'x '+i.nome, money(i.preco*i.qty))); nl(); bold(false);
     if(base.length){ txt('  '+base.join(' / ')); nl(); }
     if(obs.length){ txt('  OBS: '+obs.join(' / ')); nl(); }
@@ -1414,7 +1422,7 @@ function cupomRows(o,reimp){
   sep();
   (o.itens||[]).forEach(function(i){
     var base=[]; if(i.varNome) base.push(i.varNome); (i.adics||[]).forEach(function(a){ base.push((a.qty>1?a.qty+'x ':'+ ')+a.nome); });
-    var obs=[]; if(i.feijao) obs.push(i.feijao); if(i.sabor) obs.push(i.sabor); if(i.obs) obs.push(i.obs);
+    var obs=[]; if(i.arroz) obs.push(i.arroz); if(i.feijao) obs.push(i.feijao); if(i.sabor) obs.push(i.sabor); if(i.obs) obs.push(i.obs);
     row(ln2(i.qty+'x '+foldAscii(i.nome), money(i.preco*i.qty)),S,true);
     if(base.length) body('  '+base.join(' / '));
     if(obs.length) body('  OBS: '+obs.join(' / '),true);
@@ -1590,7 +1598,7 @@ function admCardapio(){
 // Acompanhamentos do Completo: cada item tem um botão para o ALMOÇO e outro para a JANTA. O app do cliente troca sozinho às 18h.
 function admAcompDia_(c,items){
   var d=acompDia_(), noite=ehNoite();
-  var agora=d?d.lista.concat(d.feijoes.length>1?[d.feijoes.join(' ou ')]:d.feijoes):[];
+  var agora=d?(d.arrozes.length>1?[d.arrozes.join(' ou ')]:d.arrozes).concat(d.lista, d.feijoes.length>1?[d.feijoes.join(' ou ')]:d.feijoes):[];
   var h='<div class="adm-sec-t">'+esc(c.nome)+' ('+items.length+') · <span class="tag">só o dono vê</span></div>'+
     '<div class="notice info left">'+ic('info')+'<div>O que estiver ligado aparece em <strong>"Acompanha"</strong> quando o cliente escolhe o <strong>Completo</strong>. O app troca sozinho do almoço para a janta às 18h.<br><strong>Agora ('+(noite?'janta':'almoço')+') o cliente vê:</strong> '+(agora.length?esc(agora.join(', ')):'nenhum acompanhamento ligado')+'.</div></div>';
   h+='<div class="acd"><div class="acd-row acd-head"><span>Acompanhamento</span><span class="'+(noite?'':'agora')+'">Almoço</span><span class="'+(noite?'agora':'')+'">Janta</span></div>'+
@@ -1797,6 +1805,7 @@ on('cli-prod',function(d){ abrirProduto(d.id); });
 on('cart-edit',function(d){ var i=+d.i; var it=UI.cart[i]; if(it) abrirProduto(it.prodId,i); });
 on('pd-var',function(d){ pdSel.varIdx=+d.v; patchPd(); });
 on('pd-feijao',function(d){ pdSel.feijao=d.f; patchPd(); });
+on('pd-arroz',function(d){ pdSel.arroz=d.f; patchPd(); });
 on('pd-sabor',function(d){ pdSel.sabor=d.f; patchPd(); });
 on('ver-img',function(d){
   if(!d.src) return;
@@ -1822,8 +1831,9 @@ on('pd-add',function(d){
   (p.grupos||[]).forEach(function(gr,gi){ var sel=pdSel.g[gi]||{}; gr.itens.forEach(function(it,ii){ var q=sel[ii]||0; if(q>0 && !adicEsgotado_(it.nome)) adics.push({nome:it.nome,preco:it.preco,qty:q}); }); });
   var unit=base+adics.reduce(function(a,x){return a+x.preco*x.qty;},0);
   var feijao=(vars&&vars[pdSel.varIdx])?feijaoEscolhido_(inclusosDe_(vars[pdSel.varIdx])):null;
+  var arroz=(vars&&vars[pdSel.varIdx])?arrozEscolhido_(inclusosDe_(vars[pdSel.varIdx])):null;
   var sabor=(p.sabores&&p.sabores.length)?(pdSel.sabor||p.sabores[0]):null;
-  var item={prodId:p.id,nome:p.nome,cat:p.cat,hue:p.hue,foto:p.foto,base:base,varNome:varNome,inclui:inclui,adics:adics,feijao:feijao,sabor:sabor,qty:pdSel.qty,obs:pdSel.obs,preco:unit};
+  var item={prodId:p.id,nome:p.nome,cat:p.cat,hue:p.hue,foto:p.foto,base:base,varNome:varNome,inclui:inclui,adics:adics,arroz:arroz,feijao:feijao,sabor:sabor,qty:pdSel.qty,obs:pdSel.obs,preco:unit};
   if(pdSel.edit!=null){ UI.cart[pdSel.edit]=item; toast('Item atualizado','ok'); }
   else { UI.cart.push(item); toast(pdSel.qty+'x '+p.nome+' na sacola','ok'); }
   saveCliente(); closeModal(); render();
