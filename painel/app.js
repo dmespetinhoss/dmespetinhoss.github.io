@@ -13,6 +13,7 @@ var ADMKEY = 'dm_delivery_adm';          // sessão do painel do dono (fica 24h 
 var CHKKEY = 'dm_delivery_chk';          // estado do checkout (retomar na mesma tela se o app recarregar ao voltar do WhatsApp)
 var lastRev = null;
 var _cardRev = null;     // versão do CARDÁPIO (canal leve): muda só quando o dono edita o cardápio
+var _cardDoServidor = false;   // v61: o cardápio na memória já veio do servidor nesta sessão? (antes disso é o de reserva embutido)
 var _pushing = 0;        // nº de envios (PUT /estado) em andamento: enquanto >0, não puxo/sobrescrevo meu estado
 var _lastPushTs = 0;     // timestamp do meu último envio: por alguns segundos, ignoro estados mais VELHOS que ele (evita apagar pedido recém-criado)
 function revTs_(rev){ var m=/^(\d+)/.exec(String(rev||'')); return m?parseInt(m[1],10):0; }
@@ -301,11 +302,17 @@ function saveCfg(){
 }
 function pushCardapio(){
   if(!CLOUD) return Promise.resolve(true);
+  // v61: nunca grava o cardápio de reserva por cima do real (16/11: o painel gravou o de reserva antes de o cardápio carregar)
+  if(!_cardDoServidor){ setTimeout(function(){ toast('NÃO SALVOU: aguarde o cardápio carregar do servidor e faça de novo','err'); },300); pullCardapio(); return Promise.resolve(false); }   // depois do aviso de quem chamou, pra ser o último na tela
   var body={produtos:S.produtos,categorias:S.categorias,loja:S.loja,promos:S.promos,bairros:S.bairros};
   _pushing++; _lastPushTs=Date.now();   // protege contra um pull concorrente reverter a mudança local
-  function envia(){ return apiPut('/cardapio',body).then(function(r){ if(r&&r.ok){ if(r.cardRev!=null)_cardRev=r.cardRev; return true; } return false; }); }
-  return envia().then(function(ok){ return ok?true:envia(); }).catch(function(){ return false; })
-    .then(function(v){ _pushing=Math.max(0,_pushing-1); return v; });  // 1 retry
+  function envia(){ return apiCall('PUT','/cardapio',body,true).then(function(res){ var r=res.json;
+    if(res.status===409){ _cardRev=null; _cardDoServidor=false; return 'velho'; }   // servidor recusou: este aparelho está com o cardápio velho
+    if(res.status>=200&&res.status<300&&r&&r.ok){ if(r.cardRev!=null)_cardRev=r.cardRev; return true; } return false; }); }
+  return envia().then(function(ok){ return ok==='velho'?ok:(ok?true:envia()); }).catch(function(){ return false; })
+    .then(function(v){ _pushing=Math.max(0,_pushing-1);
+      if(v==='velho'){ toast('NÃO SALVOU: o cardápio deste aparelho estava desatualizado. Recarregando: confira e faça a mudança de novo.','err'); pullCardapio(); return false; }
+      return v; });  // 1 retry
 }
 // Canal leve do cardápio: o cliente (e o painel) acompanham só o cardápio pra ver esgotado/disponível NA HORA, sem baixar os pedidos.
 function pullCardapio(){
@@ -319,7 +326,7 @@ function pullCardapio(){
     return apiGet('/cardapio').then(function(c){
       if(_pushing>0 || _lastPushTs>t0) return;   // idem: nunca sobrescrever uma mudança local recém-salva
       if(!c||!Array.isArray(c.produtos)||!c.produtos.length) return;
-      _cardRev=c.cardRev;
+      _cardRev=c.cardRev; _cardDoServidor=true;
       S.produtos=c.produtos;
       if(Array.isArray(c.categorias)&&c.categorias.length) S.categorias=c.categorias;
       if(c.loja&&c.loja.nome) S.loja=c.loja;
@@ -2489,7 +2496,7 @@ function aplicarNuvem(row){
   // proteção anti-corrida: por até 6s após o meu envio, não aceito um estado mais VELHO que ele
   // (senão um pull que leu o rev antigo, antes do meu PUT gravar, apagaria o pedido recém-criado)
   if(_lastPushTs && (Date.now()-_lastPushTs)<6000 && revTs_(row.rev)<_lastPushTs) return false;
-  lastRev=row.rev; S=row.data;
+  lastRev=row.rev; S=row.data; _cardDoServidor=true;
   // blindagem: a nuvem substitui o S inteiro; se faltar algum campo, cai no default (senão quebra login/render)
   if(!S.promos)S.promos=[];
   if(!Array.isArray(S.pedidos))S.pedidos=[];
