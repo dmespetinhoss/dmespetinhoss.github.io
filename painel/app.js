@@ -150,46 +150,46 @@ var S, UI, seedCounter=100;
 function seed(){
   var H={espetos:22,acomp:38,acai:295,bebida:205};
   var COMP_INCLUI=['Arroz branco','Macaxeira','Vinagrete'];
-  var ADIC_ESPETO=[{nome:'Arroz branco',preco:6},{nome:'Feijão tropeiro',preco:6},{nome:'Macaxeira',preco:3},{nome:'Vinagrete',preco:3}];
-  // Espetos: [nome, preço simples, preço completo (0 = sem completo), descrição]
+  var ADIC_ESPETO=[{nome:'Arroz branco',preco:6},{nome:'Feijão tropeiro',preco:6},{nome:'Macaxeira',preco:4},{nome:'Vinagrete',preco:4}];
+  // Espetos: [nome, preço simples, preço do completo no almoço (0 = sem completo), no jantar (18h em diante), descrição]
   var ESP=[
-    ['Picanha',25,35,'Picanha na brasa, suculenta e no ponto.'],
-    ['Alcatra',15,30,'Alcatra macia grelhada na brasa.'],
-    ['Queijo',10,0,'Queijo coalho dourado, quentinho.'],
-    ['Carne de Sol',15,30,'Carne de sol tradicional no espeto.'],
-    ['Medalhão de Filé',15,30,'Filé envolto em bacon, bem macio.'],
-    ['Medalhão de Frango',15,30,'Frango envolto em bacon crocante.'],
-    ['Costelinha Suína',15,30,'Costelinha suína temperada na brasa.'],
-    ['Tulipa',14,30,'Tulipa de frango dourada e suculenta.'],
-    ['Sobrecoxa Desossada',15,30,'Sobrecoxa desossada, macia e temperada.'],
-    ['Coração de Galinha',12,30,'Coração de galinha na brasa, clássico.'],
-    ['Linguiça',14,30,'Linguiça artesanal grelhada na brasa.'],
-    ['Filé de Peixe',20,30,'Filé de peixe crocante por fora, macio por dentro.']
+    ['Picanha',27.99,39.99,34.99,'Picanha na brasa, suculenta e no ponto.'],
+    ['Alcatra',15.99,34.99,29.99,'Alcatra macia grelhada na brasa.'],
+    ['Queijo',12,0,0,'Queijo coalho dourado, quentinho.'],
+    ['Carne de Sol',15.99,34.99,29.99,'Carne de sol tradicional no espeto.'],
+    ['Medalhão de Filé',19.99,34.99,29.99,'Filé envolto em bacon, bem macio.'],
+    ['Medalhão de Frango',15.99,34.99,29.99,'Frango envolto em bacon crocante.'],
+    ['Costelinha Suína',15.99,34.99,29.99,'Costelinha suína temperada na brasa.'],
+    ['Tulipa',15.99,34.99,29.99,'Tulipa de frango dourada e suculenta.'],
+    ['Sobrecoxa Desossada',15.99,34.99,29.99,'Sobrecoxa desossada, macia e temperada.'],
+    ['Coração de Galinha',15.99,34.99,29.99,'Coração de galinha na brasa, clássico.'],
+    ['Linguiça',15.99,34.99,29.99,'Linguiça artesanal grelhada na brasa.'],
+    ['Filé de Peixe',19.99,34.99,29.99,'Filé de peixe crocante por fora, macio por dentro.']
   ];
   var produtos=[], pid=0;
   function novo(o){ pid++; return Object.assign({id:'p'+pid,desc:'',foto:null,disp:'disponivel',ordem:pid-1,variacoes:[],grupos:[]},o); }
   ESP.forEach(function(r){
     var variacoes=[{nome:'Simples',preco:r[1]}];
-    if(r[2]) variacoes.push({nome:'Completo',preco:r[2],inclui:COMP_INCLUI.slice(),feijao:true});
-    produtos.push(novo({nome:r[0],preco:r[1],cat:'espetos',hue:H.espetos,desc:r[3],
+    if(r[2]) variacoes.push({nome:'Completo',preco:r[2],precoNoite:r[3],inclui:COMP_INCLUI.slice(),feijao:true});
+    produtos.push(novo({nome:r[0],preco:r[1],cat:'espetos',hue:H.espetos,desc:r[4],
       variacoes: variacoes.length>1?variacoes:[], grupos:[{nome:'Adicionais',max:0,itens:ADIC_ESPETO.slice()}]}));
   });
-  [['Arroz Branco',6,'Porção de arroz branco soltinho.'],['Feijão Tropeiro',6,'Feijão tropeiro com bacon e farofa.'],['Vinagrete',3,'Vinagrete fresquinho da casa.'],['Macaxeira',3,'Macaxeira cozida na manteiga.']].forEach(function(r){
+  [['Arroz Branco',6,'Porção de arroz branco soltinho.'],['Feijão Tropeiro',6,'Feijão tropeiro com bacon e farofa.'],['Vinagrete',4,'Vinagrete fresquinho da casa.'],['Macaxeira',4,'Macaxeira cozida na manteiga.']].forEach(function(r){
     produtos.push(novo({nome:r[0],preco:r[1],cat:'acomp',hue:H.acomp,desc:r[2]})); });
   [['Açaí Simples Natural',18,'Açaí 100% natural, puro e sem adições.'],['Filé de Peixe com Açaí',38,'Crocante por fora, macio por dentro. Acompanha açaí natural.']].forEach(function(r){
     produtos.push(novo({nome:r[0],preco:r[1],cat:'acai',hue:H.acai,desc:r[2]})); });
-  [['Refrigerante 1L',10,'Refrigerante gelado, 1 litro.'],['Refrigerante 600ml',8,'Refrigerante gelado, 600ml.'],['Refrigerante Lata',5,'Refrigerante gelado, lata 350ml.'],['Suco Natural 300ml',8,'Suco natural, copo de 300ml.'],['Skol Lata',5,'Cerveja Skol gelada, lata.'],['Coronita',9,'Coronita bem gelada.'],['Corona',11,'Corona long neck gelada.'],['Stella Gold',10,'Stella Artois Gold gelada.'],['Stella',10,'Stella Artois gelada.'],['Budweiser',10,'Budweiser gelada.'],['Heineken',11,'Heineken long neck gelada.'],['Amstel Lata',5,'Cerveja Amstel gelada, lata.'],['Original Lata',6,'Cerveja Original gelada, lata.']].forEach(function(r){
+  [['Refrigerante 1L',12,'Refrigerante gelado, 1 litro.'],['Refrigerante 600ml',9,'Refrigerante gelado, 600ml.'],['Refrigerante Lata',6,'Refrigerante gelado, lata 350ml.'],['Suco Natural 300ml',8,'Suco natural, copo de 300ml.'],['Skol Lata',5,'Cerveja Skol gelada, lata.'],['Coronita',10,'Coronita bem gelada.'],['Corona',12,'Corona long neck gelada.'],['Stella Gold',12,'Stella Artois Gold gelada.'],['Stella',12,'Stella Artois gelada.'],['Budweiser',12,'Budweiser gelada.'],['Heineken',12,'Heineken long neck gelada.'],['Amstel Lata',5,'Cerveja Amstel gelada, lata.'],['Original Lata',7,'Cerveja Original gelada, lata.']].forEach(function(r){
     produtos.push(novo({nome:r[0],preco:r[1],cat:'bebida',hue:H.bebida,desc:r[2]})); });
   produtos.push(novo({nome:'Jarra de Suco 750ml',preco:16,cat:'bebida',hue:H.bebida,desc:'Jarra de suco natural 750ml. Escolha o sabor.'})); // sabores Acerola/Maracujá/Laranja via normalizarCardapio
   // Hambúrgueres (Especial/Simples, com e sem batata)
-  produtos.push(novo({nome:'Hambúrguer Especial',preco:27.99,cat:'hamburguer',hue:25,desc:'Blend de carne 160g, bacon, queijo (mussarela ou cheddar), abacaxi, cebola caramelizada com mel, costela desfiada e salada.',variacoes:[{nome:'Sem batata',preco:27.99},{nome:'Com batata',preco:31.99}]}));
-  produtos.push(novo({nome:'Hambúrguer Simples',preco:19.99,cat:'hamburguer',hue:25,desc:'Blend de carne 160g, queijo (mussarela ou cheddar), bacon, cebola e salada.',variacoes:[{nome:'Sem batata',preco:19.99},{nome:'Com batata',preco:24.99}]}));
+  produtos.push(novo({nome:'Hambúrguer Especial',preco:29.99,cat:'hamburguer',hue:25,desc:'Blend de carne 160g, bacon, queijo (mussarela ou cheddar), abacaxi, cebola caramelizada com mel, costela desfiada e salada.',variacoes:[{nome:'Sem batata',preco:29.99},{nome:'Com batata',preco:33.99}]}));
+  produtos.push(novo({nome:'Hambúrguer Simples',preco:21.99,cat:'hamburguer',hue:25,desc:'Blend de carne 160g, queijo (mussarela ou cheddar), bacon, cebola e salada.',variacoes:[{nome:'Sem batata',preco:21.99},{nome:'Com batata',preco:26.99}]}));
   // Caldos
-  produtos.push(novo({nome:'Caldo de Costela',preco:18,cat:'caldos',hue:20,desc:'Caldo de costela encorpado e bem temperado.'}));
+  produtos.push(novo({nome:'Caldo de Costela',preco:19.99,cat:'caldos',hue:20,desc:'Caldo de costela encorpado e bem temperado.'}));
   // Panelada
-  produtos.push(novo({nome:'Panelada',preco:18,cat:'panelada',hue:15,desc:'Panelada tradicional, no capricho.',variacoes:[{nome:'Simples (500ml)',preco:18},{nome:'Completa',preco:22,inclui:['Arroz']}]}));
+  produtos.push(novo({nome:'Panelada',preco:20.99,cat:'panelada',hue:15,desc:'Panelada tradicional, no capricho.',variacoes:[{nome:'Simples (500ml)',preco:20.99},{nome:'Completa',preco:24.99,inclui:['Arroz']}]}));
   // Petiscos
-  produtos.push(novo({nome:'Batata Frita',preco:22,cat:'petiscos',hue:45,desc:'Porção de batata frita crocante e sequinha.'}));
+  produtos.push(novo({nome:'Batata Frita',preco:24.99,cat:'petiscos',hue:45,desc:'Porção de batata frita crocante e sequinha.'}));
   var categorias = [
     {id:'espetos',nome:'Espetos',ordem:1,oculta:false},
     {id:'hamburguer',nome:'Hambúrgueres',ordem:2,oculta:false},
@@ -533,13 +533,12 @@ function normalizarCardapio(s){
   if(!s||!s.produtos) return;
   s.produtos.forEach(function(p){
     var nome=String(p.nome||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
-    var semPrecoNoite = (nome==='picanha' || nome==='file de peixe'); // preço igual no almoço e na janta
     if(nome.indexOf('refrigerante')===0){ p.sabores=SABORES_REFRI.slice(); } // Coca-cola ou Guaraná
     if(nome.indexOf('jarra')===0){ p.sabores=SABORES_SUCO.slice(); } // Acerola, Maracujá ou Laranja (não afeta "Suco Natural")
+    // v61: o preço da janta (precoNoite) vem do cardápio do servidor; o app não força mais R$ 25
     (p.variacoes||[]).forEach(function(v){
       if(v.nome==='Completo'){
         v.feijao=true; if(v.inclui) v.inclui=v.inclui.filter(function(x){ return !/feij/i.test(x); });
-        if(semPrecoNoite){ delete v.precoNoite; } else { v.precoNoite=25; }
       }
     });
   });
